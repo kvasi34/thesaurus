@@ -1,5 +1,7 @@
 mod command;
+mod errors;
 mod handler;
+mod resp2;
 mod store;
 
 use std::io;
@@ -19,7 +21,7 @@ async fn main() -> io::Result<()> {
     let args = Cli::parse();
     debug!("Parsed command: {:?}", args);
 
-    // Define semaphore to limit the number of tokio tasks
+    // Define semaphore to limit the number of Tokio tasks
     let semaphore = Arc::new(Semaphore::new(args.max_connections));
 
     // Start the TCP listener
