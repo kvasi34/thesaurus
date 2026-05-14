@@ -148,14 +148,10 @@ mod tests {
 
     #[test]
     fn test_from_resp2_unknown_command() {
-        let msg = RespValue::SimpleString("PING".to_string());
-        let cmd = Command::from_resp2(&msg);
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["DOESNOTEXIST", "hello"]));
         assert_eq!(
             cmd.err().unwrap(),
-            HandlerError::UnexpectedType {
-                expected: "Array",
-                got: msg
-            }
+            HandlerError::UnknownCommand("DOESNOTEXIST".to_string())
         );
     }
 }
