@@ -30,3 +30,36 @@ impl From<RespError> for std::io::Error {
         std::io::Error::new(std::io::ErrorKind::InvalidData, e)
     }
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum HandlerError {
+    /// The received RESP2 value was not the type required to parse a command.
+    UnexpectedType {
+        expected: &'static str,
+        got: crate::resp2::RespValue,
+    },
+    UnknownCommand(String),
+}
+
+impl fmt::Display for HandlerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HandlerError::UnexpectedType { expected, got } => {
+                write!(
+                    f,
+                    "unexpected type: expected '{}', got '{:?}'",
+                    expected, got
+                )
+            }
+            HandlerError::UnknownCommand(s) => write!(f, "unknown command: '{}'", s),
+        }
+    }
+}
+
+impl std::error::Error for HandlerError {}
+
+impl From<HandlerError> for std::io::Error {
+    fn from(e: HandlerError) -> Self {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+    }
+}

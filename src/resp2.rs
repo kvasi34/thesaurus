@@ -6,7 +6,7 @@ use crate::errors::RespError;
 ///
 /// Each variant maps directly to a wire-format prefix:
 /// `+` SimpleString, `-` SimpleError, `:` Integer, `$` BulkString, `*` Array.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RespValue {
     /// `+OK\r\n` — a short, non-binary-safe string, typically used for server replies.
     SimpleString(String),
@@ -128,7 +128,7 @@ fn parse_length(length: String) -> Result<i64, RespError> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
+    use std::io::{BufRead, Cursor};
 
     use super::*;
 
@@ -329,5 +329,18 @@ mod tests {
         );
     }
 
-    // TODO: Ensure the stream is empty after reading everything
+    // Test checking that the stream is empty after decoding everything
+    #[tokio::test]
+    async fn test_stream_empty_after_decode() {
+        // +OK\r\n -ERR\r\n  :-1\r\n  $5\r\nhello\r\n  *2\r\n:1\r\n:2\r\n
+        let mut cursor = Cursor::new(b"+OK\r\n-ERR\r\n:-1\r\n$5\r\nhello\r\n*2\r\n:1\r\n:2\r\n");
+        decode(&mut cursor).await.unwrap();
+        decode(&mut cursor).await.unwrap();
+        decode(&mut cursor).await.unwrap();
+        decode(&mut cursor).await.unwrap();
+        decode(&mut cursor).await.unwrap();
+
+        // Check that the stream is empty
+        assert!(BufRead::fill_buf(&mut cursor).unwrap().is_empty());
+    }
 }
