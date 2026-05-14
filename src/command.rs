@@ -21,7 +21,7 @@ pub(crate) struct Cli {
 }
 
 /// Command parsed from raw TCP client input.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum Command {
     /// Ping the server to check if it is alive
     Ping { message: Option<String> },
@@ -84,6 +84,78 @@ impl Command {
             _ => unreachable!(),
         };
 
-        Ok(Command::Ping { message: Some(message) })
+        Ok(Command::Ping {
+            message: Some(message),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Package an array of strings into a RespValue::Array of RespValue::BulkString
+    fn create_cmd_resp_msg(args: &[&str]) -> RespValue {
+        RespValue::Array(Some(
+            args.iter()
+                .map(|s| RespValue::BulkString(Some(s.to_string())))
+                .collect(),
+        ))
+    }
+
+    #[test]
+    fn test_from_resp2_ping() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["PING", "hello"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Ping {
+                message: Some("hello".to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_ping_no_message() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["PING"]));
+        assert_eq!(cmd.unwrap(), Command::Ping { message: None });
+    }
+
+    #[test]
+    fn test_from_resp2_unexpected_type_not_array() {
+        let resp_value = RespValue::SimpleString("PING".to_string());
+        let cmd = Command::from_resp2(&resp_value);
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::UnexpectedType {
+                expected: "Array",
+                got: resp_value
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_unexpected_type_not_bulk_string() {
+        let inner_resp_value = RespValue::SimpleString("PING".to_string());
+        let cmd = Command::from_resp2(&RespValue::Array(Some(vec![inner_resp_value.clone()])));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::UnexpectedType {
+                expected: "BulkString",
+                got: inner_resp_value
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_unknown_command() {
+        let msg = RespValue::SimpleString("PING".to_string());
+        let cmd = Command::from_resp2(&msg);
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::UnexpectedType {
+                expected: "Array",
+                got: msg
+            }
+        );
     }
 }

@@ -38,6 +38,7 @@ pub(crate) enum HandlerError {
         expected: &'static str,
         got: crate::resp2::RespValue,
     },
+    /// The received RESP2 value is not a valid command.
     UnknownCommand(String),
 }
 
