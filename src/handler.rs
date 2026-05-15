@@ -41,7 +41,7 @@ impl Handler {
                 Command::Ping { message } => {
                     let reply = message.unwrap_or_default();
                     debug!("Handler {} sending: {:?}", self.uuid, reply);
-                    let _ = stream.write(reply.as_bytes());
+                    let _ = stream.write(reply.as_bytes()).await;
                     todo!("Encode and write RESP2 response");
                 }
                 _ => todo!("Handle GET, SET, DEL commands"),

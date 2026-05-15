@@ -141,8 +141,8 @@ impl Command {
         }
 
         let mut keys: Vec<String> = Vec::new();
-        for i in 1..args.len() {
-            let key = match &args[i] {
+        for arg in args.iter().skip(1) {
+            let key = match arg {
                 RespValue::BulkString(Some(s)) => s.clone(),
                 _ => unreachable!(),
             };

@@ -41,7 +41,10 @@ pub(crate) enum HandlerError {
     /// The received RESP2 value is not a valid command.
     UnknownCommand(String),
     // The received command does not have the required number of arguments.
-    WrongArity { expected: u8, got: u8 },
+    WrongArity {
+        expected: u8,
+        got: u8,
+    },
 }
 
 impl fmt::Display for HandlerError {
@@ -55,7 +58,11 @@ impl fmt::Display for HandlerError {
                 )
             }
             HandlerError::UnknownCommand(s) => write!(f, "unknown command: '{}'", s),
-            HandlerError::WrongArity { expected, got } => write!(f, "wrong number of arguments: expected {}, got {}", expected, got),
+            HandlerError::WrongArity { expected, got } => write!(
+                f,
+                "wrong number of arguments: expected {}, got {}",
+                expected, got
+            ),
         }
     }
 }
