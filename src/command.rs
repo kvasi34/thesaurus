@@ -30,7 +30,7 @@ pub(crate) enum Command {
     /// Set a key-value pair
     Set { key: String, value: String },
     /// Delete a key-value pair
-    Delete { key: String },
+    Delete { keys: Vec<String> },
 }
 
 impl Command {
@@ -70,10 +70,14 @@ impl Command {
 
         match first_arg.as_str() {
             "PING" => Command::parse_ping_command(args),
+            "GET" => Command::parse_get_command(args),
+            "SET" => Command::parse_set_command(args),
+            "DEL" => Command::parse_del_command(args),
             _ => Err(HandlerError::UnknownCommand(first_arg.clone())),
         }
     }
 
+    // Helper function to parse the arguments of a PING command into a `Command::Ping` struct
     fn parse_ping_command(args: &[RespValue]) -> Result<Self, HandlerError> {
         if args.len() == 1 {
             return Ok(Command::Ping { message: None });
@@ -87,6 +91,65 @@ impl Command {
         Ok(Command::Ping {
             message: Some(message),
         })
+    }
+
+    // Helper function to parse the arguments of a GET command into a `Command::Get` struct
+    fn parse_get_command(args: &[RespValue]) -> Result<Self, HandlerError> {
+        if args.len() != 2 {
+            return Err(HandlerError::WrongArity {
+                expected: 2,
+                got: args.len() as u8,
+            });
+        }
+
+        let key = match &args[1] {
+            RespValue::BulkString(Some(s)) => s.clone(),
+            _ => unreachable!(),
+        };
+
+        Ok(Command::Get { key })
+    }
+
+    // Helper function to parse the arguments of a SET command into a `Command::Set` struct
+    fn parse_set_command(args: &[RespValue]) -> Result<Self, HandlerError> {
+        if args.len() != 3 {
+            return Err(HandlerError::WrongArity {
+                expected: 3,
+                got: args.len() as u8,
+            });
+        }
+
+        let key = match &args[1] {
+            RespValue::BulkString(Some(s)) => s.clone(),
+            _ => unreachable!(),
+        };
+        let value = match &args[2] {
+            RespValue::BulkString(Some(s)) => s.clone(),
+            _ => unreachable!(),
+        };
+
+        Ok(Command::Set { key, value })
+    }
+
+    // Helper function to parse the arguments of a DEL command into a `Command::Delete` struct
+    fn parse_del_command(args: &[RespValue]) -> Result<Self, HandlerError> {
+        if args.len() < 2 {
+            return Err(HandlerError::WrongArity {
+                expected: 2,
+                got: args.len() as u8,
+            });
+        }
+
+        let mut keys: Vec<String> = Vec::new();
+        for i in 1..args.len() {
+            let key = match &args[i] {
+                RespValue::BulkString(Some(s)) => s.clone(),
+                _ => unreachable!(),
+            };
+            keys.push(key);
+        }
+
+        Ok(Command::Delete { keys })
     }
 }
 
@@ -142,6 +205,87 @@ mod tests {
             HandlerError::UnexpectedType {
                 expected: "BulkString",
                 got: inner_resp_value
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_get() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["GET", "foo"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Get {
+                key: "foo".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_get_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["GET", "foo", "bar"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 2,
+                got: 3
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_set() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SET", "foo", "bar"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Set {
+                key: "foo".to_string(),
+                value: "bar".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_set_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SET", "foo"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 3,
+                got: 2
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_del() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["DEL", "foo"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Delete {
+                keys: vec!["foo".to_string()]
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_del_multiple_keys() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["DEL", "foo", "bar", "baz"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Delete {
+                keys: vec!["foo".to_string(), "bar".to_string(), "baz".to_string()]
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_del_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["DEL"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 2,
+                got: 1
             }
         );
     }
