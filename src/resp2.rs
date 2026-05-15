@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt};
 
 use crate::errors::RespError;
@@ -52,6 +54,24 @@ where
         b'*' => parse_array(rest, reader).await,
         _ => Err(RespError::UnknownPrefix(*first_byte as char)),
     }
+}
+
+/// Encodes a [`RespValue`] into its RESP2 wire-format bytes.
+///
+/// The returned `Vec<u8>` is ready to be written directly to a TCP stream.
+///
+/// See the [RESP2 spec](https://redis.io/docs/latest/develop/reference/protocol-spec/).
+pub fn encode(resp_value: &RespValue) -> Vec<u8> {
+    let mut buffer: Vec<u8> = Vec::new();
+    match resp_value {
+        RespValue::SimpleString(s) => write!(buffer, "+{}\r\n", s).unwrap(),
+        RespValue::SimpleError(s) => write!(buffer, "-{}\r\n", s).unwrap(),
+        RespValue::Integer(n) => write!(buffer, ":{}\r\n", n).unwrap(),
+        RespValue::BulkString(s) => encode_bulk_string(s, &mut buffer),
+        RespValue::Array(arr) => encode_array(arr, &mut buffer),
+    }
+
+    buffer
 }
 
 /*
@@ -126,14 +146,40 @@ fn parse_length(length: String) -> Result<i64, RespError> {
     Ok(length_value)
 }
 
+// Encodes a RESP bulk string and writes the results to the buffer
+fn encode_bulk_string(bulk_string: &Option<String>, buffer: &mut Vec<u8>) {
+    match bulk_string {
+        Some(s) => write!(buffer, "${}\r\n{}\r\n", s.len(), s).unwrap(),
+        None => write!(buffer, "$-1\r\n").unwrap(),
+    }
+}
+
+// Encodes a RESP array and writes the results to the buffer
+fn encode_array(arr: &Option<Vec<RespValue>>, buffer: &mut Vec<u8>) {
+    match arr {
+        Some(items) => {
+            // Write the array prefix to buffer
+            write!(buffer, "*{}\r\n", items.len()).unwrap();
+
+            // Encode and append each item to the buffer
+            for item in items.iter() {
+                let encoded_item = encode(item);
+                buffer.extend_from_slice(&encoded_item);
+            }
+        }
+        None => write!(buffer, "*0\r\n").unwrap(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::{BufRead, Cursor};
 
     use super::*;
 
+    /*Test decoding */
     #[tokio::test]
-    async fn test_simple_string() {
+    async fn test_decode_simple_string() {
         let mut cursor = Cursor::new(b"+OK\r\n");
         let result = decode(&mut cursor).await;
         assert!(result.is_ok());
@@ -141,7 +187,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_simple_error() {
+    async fn test_decode_simple_error() {
         let mut cursor = Cursor::new(b"-Error message\r\n");
         let result = decode(&mut cursor).await;
         assert!(result.is_ok());
@@ -152,7 +198,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_integer() {
+    async fn test_decode_integer() {
         let mut cursor = Cursor::new(b":56\r\n");
         let result = decode(&mut cursor).await;
         assert!(result.is_ok());
@@ -160,7 +206,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_negative_integer() {
+    async fn test_decode_negative_integer() {
         let mut cursor = Cursor::new(b":-1\r\n");
         let result = decode(&mut cursor).await;
         assert!(result.is_ok());
@@ -168,7 +214,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_invalid_integer() {
+    async fn test_decode_invalid_integer() {
         let mut cursor = Cursor::new(b":foo\r\n");
         let result = decode(&mut cursor).await;
         assert!(result.is_err());
@@ -179,7 +225,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_bulk_string() {
+    async fn test_decode_bulk_string() {
         let mut cursor = Cursor::new(b"$5\r\nhello\r\n");
         let result = decode(&mut cursor).await;
         assert!(result.is_ok());
@@ -190,7 +236,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_null_bulk_string() {
+    async fn test_decode_null_bulk_string() {
         let mut cursor = Cursor::new(b"$-1\r\n");
         let result = decode(&mut cursor).await;
         assert!(result.is_ok());
@@ -198,7 +244,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_empty_bulk_string() {
+    async fn test_decode_empty_bulk_string() {
         let mut cursor = Cursor::new(b"$0\r\n\r\n");
         let result = decode(&mut cursor).await;
         assert!(result.is_ok());
@@ -206,7 +252,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_invalid_utf8() {
+    async fn test_decode_invalid_utf8() {
         let mut cursor = Cursor::new(b"$3\r\n\xFF\xFE\xFD\r\n");
         let result = decode(&mut cursor).await;
         assert!(result.is_err());
@@ -214,7 +260,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_array() {
+    async fn test_decode_array() {
         let mut cursor = Cursor::new(b"*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n");
         let result = decode(&mut cursor).await;
         assert!(result.is_ok());
@@ -228,7 +274,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_empty_array() {
+    async fn test_decode_empty_array() {
         let mut cursor = Cursor::new(b"*0\r\n");
         let result = decode(&mut cursor).await;
         assert!(result.is_ok());
@@ -236,7 +282,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_nested_array() {
+    async fn test_decode_nested_array() {
         /*
         *2\r\n              outer array of 2 elements
           *2\r\n            first element: inner array of 2 elements
@@ -266,7 +312,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_different_types_array() {
+    async fn test_decode_different_types_array() {
         /*
         *5\r\n
         :1\r\n
@@ -291,7 +337,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_negative_length() {
+    async fn test_decode_negative_length() {
         let mut cursor = Cursor::new(b"$-5\r\nhello\r\n");
         let result = decode(&mut cursor).await;
         assert!(result.is_err());
@@ -302,7 +348,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_unknown_prefix_error() {
+    async fn test_decode_unknown_prefix_error() {
         let mut cursor = Cursor::new(b"\r\n");
         let result = decode(&mut cursor).await;
         assert!(result.is_err());
@@ -310,7 +356,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_unexpected_eof() {
+    async fn test_decode_unexpected_eof() {
         // Bulk string promises 5 bytes but stream ends after 3
         let mut cursor = Cursor::new(b"$5\r\nhel");
         let result = decode(&mut cursor).await;
@@ -319,7 +365,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_invalid_array_length() {
+    async fn test_decode_invalid_array_length() {
         let mut cursor = Cursor::new(b"*foo\r\n");
         let result = decode(&mut cursor).await;
         assert!(result.is_err());
@@ -331,7 +377,7 @@ mod tests {
 
     // Test checking that the stream is empty after decoding everything
     #[tokio::test]
-    async fn test_stream_empty_after_decode() {
+    async fn test_decode_stream_empty_after_decode() {
         // +OK\r\n -ERR\r\n  :-1\r\n  $5\r\nhello\r\n  *2\r\n:1\r\n:2\r\n
         let mut cursor = Cursor::new(b"+OK\r\n-ERR\r\n:-1\r\n$5\r\nhello\r\n*2\r\n:1\r\n:2\r\n");
         decode(&mut cursor).await.unwrap();
@@ -342,5 +388,117 @@ mod tests {
 
         // Check that the stream is empty
         assert!(BufRead::fill_buf(&mut cursor).unwrap().is_empty());
+    }
+
+    /* Test encoding */
+    #[test]
+    fn test_encode_simple_string() {
+        assert_eq!(
+            encode(&RespValue::SimpleString("OK".to_string())),
+            b"+OK\r\n"
+        );
+    }
+
+    #[test]
+    fn test_encode_simple_error() {
+        assert_eq!(
+            encode(&RespValue::SimpleError("Error message".to_string())),
+            b"-Error message\r\n"
+        );
+    }
+
+    #[test]
+    fn test_encode_integer() {
+        assert_eq!(encode(&RespValue::Integer(56)), b":56\r\n");
+    }
+
+    #[test]
+    fn test_encode_negative_integer() {
+        assert_eq!(encode(&RespValue::Integer(-1)), b":-1\r\n");
+    }
+
+    #[test]
+    fn test_encode_bulk_string() {
+        assert_eq!(
+            encode(&RespValue::BulkString(Some("hello".to_string()))),
+            b"$5\r\nhello\r\n"
+        );
+    }
+
+    #[test]
+    fn test_encode_null_bulk_string() {
+        assert_eq!(encode(&RespValue::BulkString(None)), b"$-1\r\n");
+    }
+
+    #[test]
+    fn test_encode_empty_bulk_string() {
+        assert_eq!(
+            encode(&RespValue::BulkString(Some("".to_string()))),
+            b"$0\r\n\r\n"
+        );
+    }
+
+    #[test]
+    fn test_encode_array() {
+        assert_eq!(
+            encode(&RespValue::Array(Some(vec![
+                RespValue::BulkString(Some("hello".to_string())),
+                RespValue::BulkString(Some("world".to_string())),
+            ]))),
+            b"*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n"
+        );
+    }
+
+    #[test]
+    fn test_encode_empty_array() {
+        assert_eq!(encode(&RespValue::Array(None)), b"*0\r\n");
+    }
+
+    #[test]
+    fn test_encode_nested_array() {
+        /*
+        *2\r\n              outer array of 2 elements
+          *2\r\n            first element: inner array of 2 elements
+            $3\r\nfoo\r\n
+            $3\r\nbar\r\n
+          *2\r\n            second element: inner array of 2 elements
+            $3\r\nbaz\r\n
+            $3\r\nqux\r\n
+        */
+        assert_eq!(
+            encode(&RespValue::Array(Some(vec![
+                RespValue::Array(Some(vec![
+                    RespValue::BulkString(Some("foo".to_string())),
+                    RespValue::BulkString(Some("bar".to_string())),
+                ])),
+                RespValue::Array(Some(vec![
+                    RespValue::BulkString(Some("baz".to_string())),
+                    RespValue::BulkString(Some("qux".to_string())),
+                ])),
+            ]))),
+            b"*2\r\n*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n*2\r\n$3\r\nbaz\r\n$3\r\nqux\r\n"
+        );
+    }
+
+    #[test]
+    fn test_encode_different_types_array() {
+        /*
+        *5\r\n
+        :1\r\n
+        :2\r\n
+        :3\r\n
+        :4\r\n
+        $5\r\nhello\r\n
+        */
+        assert_eq!(
+            encode(&RespValue::Array(Some(vec![
+                RespValue::Integer(1),
+                RespValue::Integer(2),
+                RespValue::Integer(3),
+                RespValue::Integer(4),
+                RespValue::BulkString(Some("hello".to_string())),
+            ]))),
+            b"*5\r\n:1\r\n:2\r\n:3\r\n:4\r\n$5\r\nhello\r\n"
+        );
     }
 }
