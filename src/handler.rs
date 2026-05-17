@@ -1,4 +1,4 @@
-use log::{debug, warn};
+use log::{debug, trace, warn};
 use tokio::{
     io::{self, AsyncWrite, AsyncWriteExt, BufReader},
     net::TcpStream,
@@ -9,6 +9,7 @@ use crate::{
     command::Command,
     errors::RespError,
     resp2::{self, RespValue},
+    store::Store,
 };
 
 /// TCP socket connection handler.
@@ -16,14 +17,16 @@ use crate::{
 pub(crate) struct Handler {
     uuid: Uuid,
     socket: TcpStream,
+    store: Store,
 }
 
 impl Handler {
     /// Constructor for `Handler` struct.
-    pub fn new(socket: TcpStream) -> Self {
+    pub fn new(socket: TcpStream, store: Store) -> Self {
         Handler {
             uuid: Uuid::new_v4(),
             socket,
+            store,
         }
     }
 
@@ -55,6 +58,13 @@ impl Handler {
                 Command::Ping { message } => {
                     Handler::handle_ping_response(&self.uuid, message, &mut stream).await;
                 }
+                Command::Get { key } => {
+                    Handler::handle_get_response(&self.uuid, key, &mut stream, &self.store).await;
+                }
+                Command::Set { key, value } => {
+                    Handler::handle_set_response(&self.uuid, key, value, &mut stream, &self.store)
+                        .await;
+                }
                 _ => todo!("Handle GET, SET, DEL commands"),
             }
         }
@@ -82,6 +92,45 @@ impl Handler {
         debug!("Handler {} sending: {:?}", uuid, reply);
         let _ = stream.write(&encoded_reply).await;
     }
+
+    /*
+    Handles replies to GET commands. Replies with a bulk string containing the value corresponsing to the key.
+    Replies with a NULL bulk string, if the key does not exist in the store.
+    */
+    async fn handle_get_response<R>(uuid: &Uuid, key: String, stream: &mut R, store: &Store)
+    where
+        R: AsyncWrite + Unpin,
+    {
+        trace!("Handler {} getting key {}", uuid, key);
+        let value = store.get(&key);
+        trace!("Handler {} got key {} with value {:?}", uuid, key, value);
+
+        let reply = RespValue::BulkString(value);
+        let encoded_reply = resp2::encode(&reply);
+        debug!("Handler {} sending: {:?}", uuid, reply);
+        let _ = stream.write(&encoded_reply).await;
+    }
+
+    /*
+    Handles replies to SET commands. Inserts the key-value pair into the store and replies with a simple string: OK.
+    */
+    async fn handle_set_response<R>(
+        uuid: &Uuid,
+        key: String,
+        value: String,
+        stream: &mut R,
+        store: &Store,
+    ) where
+        R: AsyncWrite + Unpin,
+    {
+        debug!("Handler {} writing key {}: {}", uuid, key, value);
+        store.set(&key, value);
+
+        let reply = RespValue::SimpleString("OK".to_string());
+        let encoded_reply = resp2::encode(&reply);
+        debug!("Handler {} sending: {:?}", uuid, reply);
+        let _ = stream.write(&encoded_reply).await;
+    }
 }
 
 #[cfg(test)]
@@ -99,7 +148,10 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             let (socket, _) = listener.accept().await.unwrap();
-            Handler::new(socket).run_handler().await.unwrap();
+            Handler::new(socket, Store::new())
+                .run_handler()
+                .await
+                .unwrap();
         });
         addr
     }

@@ -21,6 +21,9 @@ async fn main() -> io::Result<()> {
     let args = Cli::parse();
     debug!("Parsed command: {:?}", args);
 
+    // Initialize the store
+    let store = store::Store::new();
+
     // Define semaphore to limit the number of Tokio tasks
     let semaphore = Arc::new(Semaphore::new(args.max_connections));
 
@@ -40,7 +43,7 @@ async fn main() -> io::Result<()> {
                 };
 
                 // Spawn handler instance and pass the socket connection
-                let handler = handler::Handler::new(socket);
+                let handler = handler::Handler::new(socket, store.clone());
                 tokio::spawn(async move {
                     if let Err(e) = handler.run_handler().await {
                         warn!("Error while running task at socket {:?}\n{}", socket_address, e);
