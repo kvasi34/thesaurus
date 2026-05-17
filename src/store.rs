@@ -1,39 +1,39 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 /// Shared in-memory key-value store.
 ///
 /// Internally wraps an `Arc<Mutex<HashMap>>` so it can be cheaply cloned
 /// and shared across handler tasks. All operations lock the mutex for the
 /// duration of the call and release it immediately on return.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct Store {
-    data: Arc<Mutex<HashMap<String, String>>>,
+    data: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl Store {
     /// Creates a new empty `Store`.
     pub fn new() -> Self {
         Store {
-            data: Arc::new(Mutex::new(HashMap::new())),
+            data: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     /// Returns the value for `key`, or `None` if the key does not exist.
     pub fn get(&self, key: &str) -> Option<String> {
-        let guard = self.data.lock().unwrap();
+        let guard = self.data.read().unwrap();
         guard.get(key).cloned()
     }
 
     /// Inserts or overwrites `key` with `value`.
     pub fn set(&self, key: &str, value: String) {
-        let mut guard = self.data.lock().unwrap();
+        let mut guard = self.data.write().unwrap();
         guard.insert(key.to_string(), value);
     }
 
     /// Removes `key` from the store. Returns `true` if the key existed.
     pub fn delete(&self, key: &str) -> bool {
-        let mut guard = self.data.lock().unwrap();
+        let mut guard = self.data.write().unwrap();
         guard.remove(key).is_some()
     }
 }
