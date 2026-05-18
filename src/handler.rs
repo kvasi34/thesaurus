@@ -150,7 +150,7 @@ impl Handler {
         debug!("Handler {} deleting keys: {:?}", uuid, keys);
         let mut keys_deleted: i64 = 0;
         for key in keys.iter() {
-            keys_deleted += store.delete(&key) as i64;
+            keys_deleted += store.delete(key) as i64;
         }
 
         let reply = RespValue::Integer(keys_deleted);
