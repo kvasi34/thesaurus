@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::{
     command::Command,
-    errors::RespError,
+    errors::{HandlerError, RespError},
     resp2::{self, RespValue},
     store::Store,
 };
@@ -51,21 +51,30 @@ impl Handler {
                     return Err(e.into());
                 }
             };
-            let cmd = Command::from_resp2(&resp_value)?;
+            let cmd = Command::from_resp2(&resp_value);
             debug!("Handler {} received command: {:?}", self.uuid, cmd);
 
             match cmd {
-                Command::Ping { message } => {
+                Ok(Command::Ping { message }) => {
                     Handler::handle_ping_response(&self.uuid, message, &mut stream).await;
                 }
-                Command::Get { key } => {
+                Ok(Command::Get { key }) => {
                     Handler::handle_get_response(&self.uuid, key, &mut stream, &self.store).await;
                 }
-                Command::Set { key, value } => {
+                Ok(Command::Set { key, value }) => {
                     Handler::handle_set_response(&self.uuid, key, value, &mut stream, &self.store)
                         .await;
                 }
-                _ => todo!("Handle GET, SET, DEL commands"),
+                Ok(Command::Delete { keys }) => {
+                    Handler::handle_del_response(&self.uuid, keys, &mut stream, &self.store).await;
+                }
+                Err(HandlerError::UnknownCommand(s)) => {
+                    Handler::handle_unknown_command_response(&self.uuid, s, &mut stream).await;
+                }
+                Err(e) => {
+                    warn!("Handler {} command parse error: {}", self.uuid, e);
+                    break;
+                }
             }
         }
 
@@ -111,9 +120,7 @@ impl Handler {
         let _ = stream.write(&encoded_reply).await;
     }
 
-    /*
-    Handles replies to SET commands. Inserts the key-value pair into the store and replies with a simple string: OK.
-    */
+    // Handles replies to SET commands. Inserts the key-value pair into the store and replies with a simple string: OK.
     async fn handle_set_response<R>(
         uuid: &Uuid,
         key: String,
@@ -127,6 +134,39 @@ impl Handler {
         store.set(&key, value);
 
         let reply = RespValue::SimpleString("OK".to_string());
+        let encoded_reply = resp2::encode(&reply);
+        debug!("Handler {} sending: {:?}", uuid, reply);
+        let _ = stream.write(&encoded_reply).await;
+    }
+
+    /*
+    Handles replies to DEL commands.
+    Deletes all given keys from the store and replies with an integer indicating the number deleted keys.
+    */
+    async fn handle_del_response<R>(uuid: &Uuid, keys: Vec<String>, stream: &mut R, store: &Store)
+    where
+        R: AsyncWrite + Unpin,
+    {
+        debug!("Handler {} deleting keys: {:?}", uuid, keys);
+        let mut keys_deleted: i64 = 0;
+        for key in keys.iter() {
+            keys_deleted += store.delete(&key) as i64;
+        }
+
+        let reply = RespValue::Integer(keys_deleted);
+        let encoded_reply = resp2::encode(&reply);
+        debug!("Handler {} sending: {:?}", uuid, reply);
+        let _ = stream.write(&encoded_reply).await;
+    }
+
+    // Handles unknown command errors by replying with a custom error message
+    async fn handle_unknown_command_response<R>(uuid: &Uuid, e: String, stream: &mut R)
+    where
+        R: AsyncWrite + Unpin,
+    {
+        warn!("Handler {} received unknown command: {}", uuid, e);
+
+        let reply = RespValue::SimpleError(format!("ERR unknown command '{}'", e));
         let encoded_reply = resp2::encode(&reply);
         debug!("Handler {} sending: {:?}", uuid, reply);
         let _ = stream.write(&encoded_reply).await;
@@ -179,5 +219,113 @@ mod tests {
 
         let response = resp2::decode(&mut client).await.unwrap();
         assert_eq!(response, RespValue::BulkString(Some("hello".to_string())));
+    }
+
+    #[tokio::test]
+    async fn test_set() {
+        let addr = start_handler().await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        client
+            .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+            .await
+            .unwrap();
+
+        let response = resp2::decode(&mut client).await.unwrap();
+        assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_get_existing_key() {
+        let addr = start_handler().await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        client
+            .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+            .await
+            .unwrap();
+        resp2::decode(&mut client).await.unwrap();
+
+        client
+            .write_all(b"*2\r\n$3\r\nGET\r\n$3\r\nfoo\r\n")
+            .await
+            .unwrap();
+
+        let response = resp2::decode(&mut client).await.unwrap();
+        assert_eq!(response, RespValue::BulkString(Some("bar".to_string())));
+    }
+
+    #[tokio::test]
+    async fn test_get_missing_key() {
+        let addr = start_handler().await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        client
+            .write_all(b"*2\r\n$3\r\nGET\r\n$7\r\nmissing\r\n")
+            .await
+            .unwrap();
+
+        let response = resp2::decode(&mut client).await.unwrap();
+        assert_eq!(response, RespValue::BulkString(None));
+    }
+
+    #[tokio::test]
+    async fn test_del_existing_key() {
+        let addr = start_handler().await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        client
+            .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+            .await
+            .unwrap();
+        resp2::decode(&mut client).await.unwrap();
+
+        client
+            .write_all(b"*2\r\n$3\r\nDEL\r\n$3\r\nfoo\r\n")
+            .await
+            .unwrap();
+
+        let response = resp2::decode(&mut client).await.unwrap();
+        assert_eq!(response, RespValue::Integer(1));
+    }
+
+    #[tokio::test]
+    async fn test_del_missing_key() {
+        let addr = start_handler().await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        client
+            .write_all(b"*2\r\n$3\r\nDEL\r\n$7\r\nmissing\r\n")
+            .await
+            .unwrap();
+
+        let response = resp2::decode(&mut client).await.unwrap();
+        assert_eq!(response, RespValue::Integer(0));
+    }
+
+    #[tokio::test]
+    async fn test_del_multiple_keys() {
+        let addr = start_handler().await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        client
+            .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+            .await
+            .unwrap();
+        resp2::decode(&mut client).await.unwrap();
+        client
+            .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nbaz\r\n$3\r\nqux\r\n")
+            .await
+            .unwrap();
+        resp2::decode(&mut client).await.unwrap();
+
+        // DEL two existing keys and one missing key — expect count 2
+        client
+            .write_all(b"*4\r\n$3\r\nDEL\r\n$3\r\nfoo\r\n$3\r\nbaz\r\n$7\r\nmissing\r\n")
+            .await
+            .unwrap();
+
+        let response = resp2::decode(&mut client).await.unwrap();
+        assert_eq!(response, RespValue::Integer(2));
     }
 }
