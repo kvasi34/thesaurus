@@ -33,7 +33,7 @@ impl Store {
     pub fn get(&self, key: &str) -> Option<String> {
         let guard = self.inner.read().unwrap();
         let expiry_entry = guard.expiry_index.get(key);
-        if expiry_entry.is_none_or(|v| Instant::now() >= *v) {
+        if expiry_entry.is_none_or(|v| Instant::now() < *v) {
             return guard.data.get(key).cloned();
         }
 
@@ -236,5 +236,24 @@ mod tests {
     fn test_persist_missing_key() {
         let store = Store::new();
         assert!(!store.persist("missing"));
+    }
+
+    #[test]
+    fn test_get_returns_none_for_expired_key() {
+        use std::time::Duration;
+        let store = Store::new();
+        store.set("foo", "bar".to_string());
+        // Set an expiry that is already in the past
+        store.set_ttl("foo", Instant::now() - Duration::from_secs(1));
+        assert_eq!(store.get("foo"), None);
+    }
+
+    #[test]
+    fn test_get_returns_value_for_key_with_future_expiry() {
+        use std::time::Duration;
+        let store = Store::new();
+        store.set("foo", "bar".to_string());
+        store.set_ttl("foo", Instant::now() + Duration::from_secs(60));
+        assert_eq!(store.get("foo"), Some("bar".to_string()));
     }
 }
