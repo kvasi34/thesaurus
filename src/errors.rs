@@ -40,11 +40,12 @@ pub(crate) enum HandlerError {
     },
     /// The received RESP2 value is not a valid command.
     UnknownCommand(String),
-    // The received command does not have the required number of arguments.
-    WrongArity {
-        expected: u8,
-        got: u8,
-    },
+    /// The received command does not have the required number of arguments.
+    WrongArity { expected: u8, got: u8 },
+    /// The received command does not contain an integer.
+    NotAnInteger(String),
+    /// Overflow occured when adding the EXPIRE seconds to `Instant::now()`.
+    ExpireOverflow(u64),
 }
 
 impl fmt::Display for HandlerError {
@@ -62,6 +63,12 @@ impl fmt::Display for HandlerError {
                 f,
                 "wrong number of arguments: expected {}, got {}",
                 expected, got
+            ),
+            HandlerError::NotAnInteger(s) => write!(f, "not an integer: '{}'", s),
+            HandlerError::ExpireOverflow(i) => write!(
+                f,
+                "EXPIRE command overflowed when adding {} seconds to `Instant::now()`",
+                i
             ),
         }
     }

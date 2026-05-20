@@ -31,6 +31,12 @@ pub(crate) enum Command {
     Set { key: String, value: String },
     /// Delete a key-value pair
     Delete { keys: Vec<String> },
+    /// Get the remaining time to live of a key that has a timeout
+    Ttl { key: String },
+    /// Remove the expiry from a key, making it permanent
+    Persist { key: String },
+    /// Set a timeout  key
+    Expire { key: String, seconds: u64 },
 }
 
 impl Command {
@@ -68,11 +74,15 @@ impl Command {
             _ => unreachable!(),
         };
 
+        // Call the appropriate parser function for each command type
         match first_arg.as_str() {
             "PING" => Command::parse_ping_command(args),
-            "GET" => Command::parse_get_command(args),
+            "GET" => Command::parse_key_command(args, |key| Command::Get { key }),
             "SET" => Command::parse_set_command(args),
             "DEL" => Command::parse_del_command(args),
+            "TTL" => Command::parse_key_command(args, |key| Command::Ttl { key }),
+            "PERSIST" => Command::parse_key_command(args, |key| Command::Persist { key }),
+            "EXPIRE" => Command::parse_expire_command(args),
             _ => Err(HandlerError::UnknownCommand(first_arg.clone())),
         }
     }
@@ -93,8 +103,11 @@ impl Command {
         })
     }
 
-    // Helper function to parse the arguments of a GET command into a `Command::Get` struct
-    fn parse_get_command(args: &[RespValue]) -> Result<Self, HandlerError> {
+    // Helper function to parse the arguments of commands that require a single mandatory `key` argument into the `Command` struct
+    fn parse_key_command(
+        args: &[RespValue],
+        make_cmd: fn(String) -> Command,
+    ) -> Result<Self, HandlerError> {
         if args.len() != 2 {
             return Err(HandlerError::WrongArity {
                 expected: 2,
@@ -107,7 +120,7 @@ impl Command {
             _ => unreachable!(),
         };
 
-        Ok(Command::Get { key })
+        Ok(make_cmd(key))
     }
 
     // Helper function to parse the arguments of a SET command into a `Command::Set` struct
@@ -150,6 +163,29 @@ impl Command {
         }
 
         Ok(Command::Delete { keys })
+    }
+
+    // Helper function to parse the arguments of an EXPIRE command into a `Command::Expire` struct
+    fn parse_expire_command(args: &[RespValue]) -> Result<Self, HandlerError> {
+        if args.len() != 3 {
+            return Err(HandlerError::WrongArity {
+                expected: 3,
+                got: args.len() as u8,
+            });
+        }
+
+        let key = match &args[1] {
+            RespValue::BulkString(Some(s)) => s.clone(),
+            _ => unreachable!(),
+        };
+        let seconds = match &args[2] {
+            RespValue::BulkString(Some(s)) => s
+                .parse::<u64>()
+                .map_err(|_| HandlerError::NotAnInteger(s.clone()))?,
+            _ => unreachable!(),
+        };
+
+        Ok(Command::Expire { key, seconds })
     }
 }
 
