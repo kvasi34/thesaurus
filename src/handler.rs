@@ -92,7 +92,12 @@ impl Handler {
                 }
                 Err(e) => {
                     warn!("Handler {} command parse error: {}", self.uuid, e);
-                    Handler::send_response(&self.uuid, &mut stream, RespValue::SimpleError(e.to_string())).await;
+                    Handler::send_response(
+                        &self.uuid,
+                        &mut stream,
+                        RespValue::SimpleError(e.to_string()),
+                    )
+                    .await;
                 }
             }
         }
