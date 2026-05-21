@@ -2,7 +2,9 @@ mod command;
 mod errors;
 mod handler;
 mod resp2;
+mod responses;
 mod store;
+mod ttl;
 
 use std::io;
 use std::sync::Arc;
@@ -23,6 +25,12 @@ async fn main() -> io::Result<()> {
 
     // Initialize the store
     let store = store::Store::new();
+
+    // Spawn the TTL eviction daemon task, which clears expired keys
+    let daemon_store = store.clone();
+    tokio::spawn(async move {
+        ttl::TtlEvictionDaemon::spawn(args.hz, daemon_store).await;
+    });
 
     // Define semaphore to limit the number of Tokio tasks
     let semaphore = Arc::new(Semaphore::new(args.max_connections));
