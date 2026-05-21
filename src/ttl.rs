@@ -6,16 +6,16 @@ use crate::store::Store;
 
 const N: usize = 20;
 
-pub(crate) struct TtlEvictionDeamon {
+pub(crate) struct TtlEvictionDaemon {
     store: Store,
 }
 
-impl TtlEvictionDeamon {
+impl TtlEvictionDaemon {
     /// Spawns the TTL daemon and starts the loop sampling key-value pairs for eviction.
     /// The `hz` parameter controls the loop interval in milliseconds.
     pub async fn spawn(hz: u64, store: Store) {
         info!(
-            "Starting TTL eviction deamon task with an eviction interval of {} ms",
+            "Starting TTL eviction daemon task with an eviction interval of {} ms",
             hz
         );
         let daemon = Self { store };

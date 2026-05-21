@@ -29,7 +29,7 @@ async fn main() -> io::Result<()> {
     // Spawn the TTL eviction daemon task, which clears expired keys
     let daemon_store = store.clone();
     tokio::spawn(async move {
-        ttl::TtlEvictionDeamon::spawn(args.hz, daemon_store).await;
+        ttl::TtlEvictionDaemon::spawn(args.hz, daemon_store).await;
     });
 
     // Define semaphore to limit the number of Tokio tasks
