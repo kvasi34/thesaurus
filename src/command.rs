@@ -31,6 +31,8 @@ pub(crate) enum Command {
     Set { key: String, value: String },
     /// Delete a key-value pair
     Delete { keys: Vec<String> },
+    /// Returns if key(s) exists.
+    Exists { keys: Vec<String> },
     /// Get the remaining time to live of a key that has a timeout
     Ttl { key: String },
     /// Remove the expiry from a key, making it permanent
@@ -79,7 +81,8 @@ impl Command {
             "PING" => Command::parse_ping_command(args),
             "GET" => Command::parse_key_command(args, |key| Command::Get { key }),
             "SET" => Command::parse_set_command(args),
-            "DEL" => Command::parse_del_command(args),
+            "DEL" => Command::parse_keys_command(args, |keys| Command::Delete { keys }),
+            "EXISTS" => Command::parse_keys_command(args, |keys| Command::Exists { keys }),
             "TTL" => Command::parse_key_command(args, |key| Command::Ttl { key }),
             "PERSIST" => Command::parse_key_command(args, |key| Command::Persist { key }),
             "EXPIRE" => Command::parse_expire_command(args),
@@ -144,8 +147,11 @@ impl Command {
         Ok(Command::Set { key, value })
     }
 
-    // Helper function to parse the arguments of a DEL command into a `Command::Delete` struct
-    fn parse_del_command(args: &[RespValue]) -> Result<Self, HandlerError> {
+    // Helper function to parse the arguments of commands that require one or more `keys` arguments into the `Command` struct
+    fn parse_keys_command(
+        args: &[RespValue],
+        make_cmd: fn(Vec<String>) -> Command,
+    ) -> Result<Self, HandlerError> {
         if args.len() < 2 {
             return Err(HandlerError::WrongArity {
                 expected: 2,
@@ -162,7 +168,7 @@ impl Command {
             keys.push(key);
         }
 
-        Ok(Command::Delete { keys })
+        Ok(make_cmd(keys))
     }
 
     // Helper function to parse the arguments of an EXPIRE command into a `Command::Expire` struct

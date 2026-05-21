@@ -5,6 +5,7 @@ use uuid::Uuid;
 use crate::resp2::{self, RespValue};
 
 mod del;
+mod exists;
 mod expire;
 mod get;
 mod persist;
@@ -14,6 +15,7 @@ mod ttl;
 mod unknown;
 
 pub(crate) use del::handle_del_response;
+pub(crate) use exists::handle_exists_response;
 pub(crate) use expire::handle_expire_response;
 pub(crate) use get::handle_get_response;
 pub(crate) use persist::handle_persist_response;

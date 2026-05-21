@@ -4,8 +4,8 @@ use tokio::net::TcpStream;
 use uuid::Uuid;
 
 use crate::responses::{
-    handle_del_response, handle_expire_response, handle_get_response, handle_persist_response,
-    handle_ping_response, handle_set_response, handle_ttl_response,
+    handle_del_response, handle_exists_response, handle_expire_response, handle_get_response,
+    handle_persist_response, handle_ping_response, handle_set_response, handle_ttl_response,
     handle_unknown_command_response, send_response,
 };
 use crate::{
@@ -69,6 +69,9 @@ impl Handler {
                 }
                 Ok(Command::Delete { keys }) => {
                     handle_del_response(&self.uuid, keys, &mut stream, &self.store).await?;
+                }
+                Ok(Command::Exists { keys }) => {
+                    handle_exists_response(&self.uuid, keys, &mut stream, &self.store).await?;
                 }
                 Ok(Command::Ttl { key }) => {
                     handle_ttl_response(&self.uuid, key, &mut stream, &self.store).await?;
@@ -250,6 +253,56 @@ mod tests {
         // DEL two existing keys and one missing key — expect count 2
         client
             .write_all(b"*4\r\n$3\r\nDEL\r\n$3\r\nfoo\r\n$3\r\nbaz\r\n$7\r\nmissing\r\n")
+            .await
+            .unwrap();
+
+        let response = resp2::decode(&mut client).await.unwrap();
+        assert_eq!(response, RespValue::Integer(2));
+    }
+
+    #[tokio::test]
+    async fn test_exists_existing_key() {
+        let store = Store::new();
+        store.set("key1", "Hello".to_string());
+
+        let addr = start_handler_with_store(store).await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        client
+            .write_all(b"*2\r\n$6\r\nEXISTS\r\n$4\r\nkey1\r\n")
+            .await
+            .unwrap();
+
+        let response = resp2::decode(&mut client).await.unwrap();
+        assert_eq!(response, RespValue::Integer(1));
+    }
+
+    #[tokio::test]
+    async fn test_exists_missing_key() {
+        let addr = start_handler().await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        client
+            .write_all(b"*2\r\n$6\r\nEXISTS\r\n$9\r\nnosuchkey\r\n")
+            .await
+            .unwrap();
+
+        let response = resp2::decode(&mut client).await.unwrap();
+        assert_eq!(response, RespValue::Integer(0));
+    }
+
+    #[tokio::test]
+    async fn test_exists_multiple_key() {
+        let store = Store::new();
+        store.set("key1", "Hello".to_string());
+        store.set("key2", "World".to_string());
+
+        let addr = start_handler_with_store(store).await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        // EXISTS key1 key2 nosuchkey — expect 2
+        client
+            .write_all(b"*4\r\n$6\r\nEXISTS\r\n$4\r\nkey1\r\n$4\r\nkey2\r\n$9\r\nnosuchkey\r\n")
             .await
             .unwrap();
 
