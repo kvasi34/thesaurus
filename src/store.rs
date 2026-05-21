@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
+use rand::seq::IteratorRandom;
+
 /// Shared in-memory key-value store.
 ///
 /// Internally wraps an `Arc<Mutex<HashMap>>` so it can be cheaply cloned
@@ -85,6 +87,28 @@ impl Store {
     pub fn persist(&self, key: &str) -> bool {
         let mut guard = self.inner.write().unwrap();
         guard.expiry_index.remove(key).is_some()
+    }
+
+    /// Samples `n` pairs from the eviction index at random.
+    pub fn sample_eviction_index(&self, n: usize) -> Vec<(String, Instant)> {
+        let mut rng = rand::rng();
+        let guard = self.inner.read().unwrap();
+        guard
+            .expiry_index
+            .iter()
+            .sample(&mut rng, n)
+            .into_iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect()
+    }
+
+    /// Deletes all the keys in the `keys`. Skips keys that do not exist.
+    pub fn delete_bulk(&self, keys: &Vec<String>) {
+        let mut guard = self.inner.write().unwrap();
+        for key in keys {
+            guard.expiry_index.remove(key);
+            guard.data.remove(key);
+        }
     }
 }
 
@@ -274,5 +298,46 @@ mod tests {
     fn test_persist_missing_key() {
         let store = Store::new();
         assert!(!store.persist("missing"));
+    }
+
+    #[test]
+    fn test_delete_bulk() {
+        let store = Store::new();
+        for i in 0..10u8 {
+            store.set(&format!("k{}", i), format!("v{}", i));
+        }
+
+        let keys: Vec<String> = (1..=5).map(|i| format!("k{}", i)).collect();
+        store.delete_bulk(&keys);
+
+        for i in 1..=5 {
+            assert_eq!(store.get(&format!("k{}", i)), None);
+        }
+        for i in [0, 6, 7, 8, 9] {
+            assert!(store.get(&format!("k{}", i)).is_some());
+        }
+    }
+
+    #[test]
+    fn test_delete_bulk_removes_expiry() {
+        use std::time::Duration;
+        let store = Store::new();
+        store.set("foo", "bar".to_string());
+        store.set_ttl("foo", Instant::now() + Duration::from_secs(60));
+
+        store.delete_bulk(&vec!["foo".to_string()]);
+
+        assert_eq!(store.get("foo"), None);
+        assert_eq!(store.get_ttl("foo"), None);
+    }
+
+    #[test]
+    fn test_delete_bulk_skips_missing_keys() {
+        let store = Store::new();
+        store.set("foo", "bar".to_string());
+
+        store.delete_bulk(&vec!["foo".to_string(), "missing".to_string()]);
+
+        assert_eq!(store.get("foo"), None);
     }
 }

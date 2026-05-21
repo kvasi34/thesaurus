@@ -18,6 +18,10 @@ pub(crate) struct Cli {
     /// Max TCP socket connections
     #[arg(long, default_value_t = 100, env = "THESAURUS_MAX_CONNECTIONS")]
     pub max_connections: usize,
+
+    /// TTL eviction sampling interval in milliseconds
+    #[arg(long, default_value_t = 100, env = "THESAURUS_HZ")]
+    pub hz: u64,
 }
 
 /// Command parsed from raw TCP client input.
