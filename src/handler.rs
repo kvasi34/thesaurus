@@ -1,12 +1,13 @@
-use std::time::{Duration, Instant};
-
-use log::{debug, trace, warn};
-use tokio::{
-    io::{self, AsyncWrite, AsyncWriteExt, BufReader},
-    net::TcpStream,
-};
+use log::{debug, warn};
+use tokio::io::{self, BufReader};
+use tokio::net::TcpStream;
 use uuid::Uuid;
 
+use crate::responses::{
+    handle_del_response, handle_expire_response, handle_get_response, handle_persist_response,
+    handle_ping_response, handle_set_response, handle_ttl_response,
+    handle_unknown_command_response, send_response,
+};
 use crate::{
     command::Command,
     errors::{HandlerError, RespError},
@@ -58,42 +59,33 @@ impl Handler {
 
             match cmd {
                 Ok(Command::Ping { message }) => {
-                    Handler::handle_ping_response(&self.uuid, message, &mut stream).await?;
+                    handle_ping_response(&self.uuid, message, &mut stream).await?;
                 }
                 Ok(Command::Get { key }) => {
-                    Handler::handle_get_response(&self.uuid, key, &mut stream, &self.store).await?;
+                    handle_get_response(&self.uuid, key, &mut stream, &self.store).await?;
                 }
                 Ok(Command::Set { key, value }) => {
-                    Handler::handle_set_response(&self.uuid, key, value, &mut stream, &self.store)
-                        .await?;
+                    handle_set_response(&self.uuid, key, value, &mut stream, &self.store).await?;
                 }
                 Ok(Command::Delete { keys }) => {
-                    Handler::handle_del_response(&self.uuid, keys, &mut stream, &self.store)
-                        .await?;
+                    handle_del_response(&self.uuid, keys, &mut stream, &self.store).await?;
                 }
                 Ok(Command::Ttl { key }) => {
-                    Handler::handle_ttl_response(&self.uuid, key, &mut stream, &self.store).await?;
+                    handle_ttl_response(&self.uuid, key, &mut stream, &self.store).await?;
                 }
                 Ok(Command::Persist { key }) => {
-                    Handler::handle_persist_response(&self.uuid, key, &mut stream, &self.store)
-                        .await?;
+                    handle_persist_response(&self.uuid, key, &mut stream, &self.store).await?;
                 }
                 Ok(Command::Expire { key, seconds }) => {
-                    Handler::handle_expire_response(
-                        &self.uuid,
-                        key,
-                        seconds,
-                        &mut stream,
-                        &self.store,
-                    )
-                    .await?;
+                    handle_expire_response(&self.uuid, key, seconds, &mut stream, &self.store)
+                        .await?;
                 }
                 Err(HandlerError::UnknownCommand(s)) => {
-                    Handler::handle_unknown_command_response(&self.uuid, s, &mut stream).await?;
+                    handle_unknown_command_response(&self.uuid, s, &mut stream).await?;
                 }
                 Err(e) => {
                     warn!("Handler {} command parse error: {}", self.uuid, e);
-                    Handler::send_response(
+                    send_response(
                         &self.uuid,
                         &mut stream,
                         RespValue::SimpleError(e.to_string()),
@@ -105,209 +97,6 @@ impl Handler {
 
         debug!("Handler {} stopped", self.uuid);
         Ok(())
-    }
-
-    /*
-    Handles replies to PING commands.
-
-    If PING has an argument, the argument is returned as a bulk string.
-    Otherwise, PONG is returned as a simple string.
-    */
-    async fn handle_ping_response<R>(
-        uuid: &Uuid,
-        message: Option<String>,
-        stream: &mut R,
-    ) -> io::Result<()>
-    where
-        R: AsyncWrite + Unpin,
-    {
-        let response_value = match message {
-            Some(s) => RespValue::BulkString(Some(s)),
-            None => RespValue::SimpleString("PONG".to_string()),
-        };
-
-        Handler::send_response(uuid, stream, response_value).await
-    }
-
-    /*
-    Handles replies to GET commands. Replies with a bulk string containing the value corresponsing to the key.
-    Replies with a NULL bulk string, if the key does not exist in the store.
-    */
-    async fn handle_get_response<R>(
-        uuid: &Uuid,
-        key: String,
-        stream: &mut R,
-        store: &Store,
-    ) -> io::Result<()>
-    where
-        R: AsyncWrite + Unpin,
-    {
-        trace!("Handler {} getting key {}", uuid, key);
-        let stored_value = store.get(&key);
-        trace!(
-            "Handler {} got key {} with value {:?}",
-            uuid, key, stored_value
-        );
-
-        let response_value = RespValue::BulkString(stored_value);
-        Handler::send_response(uuid, stream, response_value).await
-    }
-
-    // Handles replies to SET commands. Inserts the key-value pair into the store and replies with a simple string: OK.
-    async fn handle_set_response<R>(
-        uuid: &Uuid,
-        key: String,
-        value: String,
-        stream: &mut R,
-        store: &Store,
-    ) -> io::Result<()>
-    where
-        R: AsyncWrite + Unpin,
-    {
-        debug!("Handler {} writing key {}: {}", uuid, key, value);
-        store.set(&key, value);
-
-        let response_value = RespValue::SimpleString("OK".to_string());
-        Handler::send_response(uuid, stream, response_value).await
-    }
-
-    /*
-    Handles replies to DEL commands.
-    Deletes all given keys from the store and replies with an integer indicating the number deleted keys.
-    */
-    async fn handle_del_response<R>(
-        uuid: &Uuid,
-        keys: Vec<String>,
-        stream: &mut R,
-        store: &Store,
-    ) -> io::Result<()>
-    where
-        R: AsyncWrite + Unpin,
-    {
-        debug!("Handler {} deleting keys: {:?}", uuid, keys);
-        let mut deleted_key_count: i64 = 0;
-        for key in keys.iter() {
-            deleted_key_count += store.delete(key) as i64;
-        }
-
-        let response_value = RespValue::Integer(deleted_key_count);
-        Handler::send_response(uuid, stream, response_value).await
-    }
-
-    /*
-    Handles replies to TTL commands.
-    Returns the remaining time to live of a key that has a timeout in seconds.
-    The command returns -2 if the key does not exist.
-    The command returns -1 if the key exists but has no associated expire.
-    */
-    async fn handle_ttl_response<R>(
-        uuid: &Uuid,
-        key: String,
-        stream: &mut R,
-        store: &Store,
-    ) -> io::Result<()>
-    where
-        R: AsyncWrite + Unpin,
-    {
-        trace!("Handler {} getting TTL for key {}", uuid, key);
-        let expiry_instant = store.get_ttl(&key);
-        trace!(
-            "Handler {} got TTL for key {} with expiry {:?}",
-            uuid, key, expiry_instant
-        );
-
-        let response_value = match expiry_instant {
-            // Get the TTL as seconds by comparing the expiry instant to the current instant
-            Some(expiry) => match expiry.checked_duration_since(Instant::now()) {
-                Some(remaining) => RespValue::Integer(remaining.as_secs() as i64),
-                None => RespValue::Integer(-2), // The key has expired; treat as a missing key
-            },
-            // No expiry entry; check if the key exists in the store
-            None => RespValue::Integer(if store.exists(&key) { -1 } else { -2 }),
-        };
-        Handler::send_response(uuid, stream, response_value).await
-    }
-
-    /*
-    Handles replies to PERSIST commands.
-    Removes the existing timeout on a key.
-    Replies with 0 if key does not exist or does not have an associated timeout, or 1 if the timeout has been removed.
-    */
-    async fn handle_persist_response<R>(
-        uuid: &Uuid,
-        key: String,
-        stream: &mut R,
-        store: &Store,
-    ) -> io::Result<()>
-    where
-        R: AsyncWrite + Unpin,
-    {
-        trace!("Handler {} persisting key {}", uuid, key);
-        let removed = store.persist(&key);
-        let response_value = RespValue::Integer(removed as i64);
-        Handler::send_response(uuid, stream, response_value).await
-    }
-
-    /*
-    Handles replies to EXPIRE commands.
-    Replies with 1 if the timeout was set, or 0 if the timeout was not set.
-    */
-    async fn handle_expire_response<R>(
-        uuid: &Uuid,
-        key: String,
-        seconds: u64,
-        stream: &mut R,
-        store: &Store,
-    ) -> io::Result<()>
-    where
-        R: AsyncWrite + Unpin,
-    {
-        debug!(
-            "Handler {} expiring key {} with {} seconds",
-            uuid, key, seconds
-        );
-
-        let expiration = Instant::now().checked_add(Duration::from_secs(seconds));
-        // None means that an overflow occured during the addition; reply with a generic error message
-        if expiration.is_none() {
-            return Handler::send_response(
-                uuid,
-                stream,
-                RespValue::SimpleError("ERR invalid expire time in 'expire' command".to_string()),
-            )
-            .await;
-        }
-
-        let response_value = RespValue::Integer(store.set_ttl(&key, expiration.unwrap()) as i64);
-        Handler::send_response(uuid, stream, response_value).await
-    }
-
-    // Handles unknown command errors by replying with a custom error message
-    async fn handle_unknown_command_response<R>(
-        uuid: &Uuid,
-        e: String,
-        stream: &mut R,
-    ) -> io::Result<()>
-    where
-        R: AsyncWrite + Unpin,
-    {
-        warn!("Handler {} received unknown command: {}", uuid, e);
-        let response_value = RespValue::SimpleError(format!("ERR unknown command '{}'", e));
-        Handler::send_response(uuid, stream, response_value).await
-    }
-
-    // Helper function to simply the response process
-    async fn send_response<R>(
-        uuid: &Uuid,
-        stream: &mut R,
-        response_value: RespValue,
-    ) -> io::Result<()>
-    where
-        R: AsyncWrite + Unpin,
-    {
-        let encoded_response = resp2::encode(&response_value);
-        debug!("Handler {} sending: {:?}", uuid, response_value);
-        stream.write_all(&encoded_response).await
     }
 }
 

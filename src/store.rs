@@ -57,7 +57,11 @@ impl Store {
     /// Checks if a `key` exists in the store.
     pub fn exists(&self, key: &str) -> bool {
         let guard = self.inner.read().unwrap();
-        guard.data.contains_key(key) && guard.expiry_index.get(key).is_none_or(|v| Instant::now() < *v)
+        guard.data.contains_key(key)
+            && guard
+                .expiry_index
+                .get(key)
+                .is_none_or(|v| Instant::now() < *v)
     }
 
     /// Returns the TTL value for `key`, or `None` if the key does not exist in the expiry index.

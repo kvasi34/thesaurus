@@ -2,6 +2,7 @@ mod command;
 mod errors;
 mod handler;
 mod resp2;
+mod responses;
 mod store;
 
 use std::io;
