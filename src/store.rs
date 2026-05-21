@@ -57,7 +57,7 @@ impl Store {
     /// Checks if a `key` exists in the store.
     pub fn exists(&self, key: &str) -> bool {
         let guard = self.inner.read().unwrap();
-        guard.data.contains_key(key)
+        guard.data.contains_key(key) && guard.expiry_index.get(key).is_none_or(|v| Instant::now() < *v)
     }
 
     /// Returns the TTL value for `key`, or `None` if the key does not exist in the expiry index.
@@ -88,13 +88,7 @@ impl Store {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_set_and_get() {
-        let store = Store::new();
-        store.set("foo", "bar".to_string());
-        assert_eq!(store.get("foo"), Some("bar".to_string()));
-    }
-
+    // get
     #[test]
     fn test_get_missing_key() {
         let store = Store::new();
@@ -102,17 +96,29 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_existing_key() {
+    fn test_get_returns_none_for_expired_key() {
+        use std::time::Duration;
         let store = Store::new();
         store.set("foo", "bar".to_string());
-        assert!(store.delete("foo"));
+        store.set_ttl("foo", Instant::now() - Duration::from_secs(1));
         assert_eq!(store.get("foo"), None);
     }
 
     #[test]
-    fn test_delete_missing_key() {
+    fn test_get_returns_value_for_key_with_future_expiry() {
+        use std::time::Duration;
         let store = Store::new();
-        assert!(!store.delete("missing"));
+        store.set("foo", "bar".to_string());
+        store.set_ttl("foo", Instant::now() + Duration::from_secs(60));
+        assert_eq!(store.get("foo"), Some("bar".to_string()));
+    }
+
+    // set
+    #[test]
+    fn test_set_and_get() {
+        let store = Store::new();
+        store.set("foo", "bar".to_string());
+        assert_eq!(store.get("foo"), Some("bar".to_string()));
     }
 
     #[test]
@@ -139,6 +145,22 @@ mod tests {
         assert_eq!(store_a.get("foo"), None);
     }
 
+    // delete
+    #[test]
+    fn test_delete_existing_key() {
+        let store = Store::new();
+        store.set("foo", "bar".to_string());
+        assert!(store.delete("foo"));
+        assert_eq!(store.get("foo"), None);
+    }
+
+    #[test]
+    fn test_delete_missing_key() {
+        let store = Store::new();
+        assert!(!store.delete("missing"));
+    }
+
+    // exists
     #[test]
     fn test_exists_present_key() {
         let store = Store::new();
@@ -161,6 +183,16 @@ mod tests {
     }
 
     #[test]
+    fn test_exists_expired_key() {
+        use std::time::Duration;
+        let store = Store::new();
+        store.set("foo", "bar".to_string());
+        store.set_ttl("foo", Instant::now() - Duration::from_secs(1));
+        assert!(!store.exists("foo"));
+    }
+
+    // get_ttl
+    #[test]
     fn test_get_ttl_no_expiry() {
         let store = Store::new();
         store.set("foo", "bar".to_string());
@@ -177,6 +209,7 @@ mod tests {
         assert_eq!(store.get_ttl("foo"), Some(expiry));
     }
 
+    // set_ttl
     #[test]
     fn test_set_ttl_existing_key() {
         use std::time::Duration;
@@ -206,6 +239,7 @@ mod tests {
         assert_eq!(store.get_ttl("foo"), Some(second_expiry));
     }
 
+    // persist
     #[test]
     fn test_persist_key_with_ttl() {
         use std::time::Duration;
@@ -236,24 +270,5 @@ mod tests {
     fn test_persist_missing_key() {
         let store = Store::new();
         assert!(!store.persist("missing"));
-    }
-
-    #[test]
-    fn test_get_returns_none_for_expired_key() {
-        use std::time::Duration;
-        let store = Store::new();
-        store.set("foo", "bar".to_string());
-        // Set an expiry that is already in the past
-        store.set_ttl("foo", Instant::now() - Duration::from_secs(1));
-        assert_eq!(store.get("foo"), None);
-    }
-
-    #[test]
-    fn test_get_returns_value_for_key_with_future_expiry() {
-        use std::time::Duration;
-        let store = Store::new();
-        store.set("foo", "bar".to_string());
-        store.set_ttl("foo", Instant::now() + Duration::from_secs(60));
-        assert_eq!(store.get("foo"), Some("bar".to_string()));
     }
 }

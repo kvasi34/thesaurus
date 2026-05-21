@@ -58,24 +58,25 @@ impl Handler {
 
             match cmd {
                 Ok(Command::Ping { message }) => {
-                    Handler::handle_ping_response(&self.uuid, message, &mut stream).await;
+                    Handler::handle_ping_response(&self.uuid, message, &mut stream).await?;
                 }
                 Ok(Command::Get { key }) => {
-                    Handler::handle_get_response(&self.uuid, key, &mut stream, &self.store).await;
+                    Handler::handle_get_response(&self.uuid, key, &mut stream, &self.store).await?;
                 }
                 Ok(Command::Set { key, value }) => {
                     Handler::handle_set_response(&self.uuid, key, value, &mut stream, &self.store)
-                        .await;
+                        .await?;
                 }
                 Ok(Command::Delete { keys }) => {
-                    Handler::handle_del_response(&self.uuid, keys, &mut stream, &self.store).await;
+                    Handler::handle_del_response(&self.uuid, keys, &mut stream, &self.store)
+                        .await?;
                 }
                 Ok(Command::Ttl { key }) => {
-                    Handler::handle_ttl_response(&self.uuid, key, &mut stream, &self.store).await;
+                    Handler::handle_ttl_response(&self.uuid, key, &mut stream, &self.store).await?;
                 }
                 Ok(Command::Persist { key }) => {
                     Handler::handle_persist_response(&self.uuid, key, &mut stream, &self.store)
-                        .await;
+                        .await?;
                 }
                 Ok(Command::Expire { key, seconds }) => {
                     Handler::handle_expire_response(
@@ -88,7 +89,7 @@ impl Handler {
                     .await?;
                 }
                 Err(HandlerError::UnknownCommand(s)) => {
-                    Handler::handle_unknown_command_response(&self.uuid, s, &mut stream).await;
+                    Handler::handle_unknown_command_response(&self.uuid, s, &mut stream).await?;
                 }
                 Err(e) => {
                     warn!("Handler {} command parse error: {}", self.uuid, e);
@@ -97,7 +98,7 @@ impl Handler {
                         &mut stream,
                         RespValue::SimpleError(e.to_string()),
                     )
-                    .await;
+                    .await?;
                 }
             }
         }
@@ -112,7 +113,11 @@ impl Handler {
     If PING has an argument, the argument is returned as a bulk string.
     Otherwise, PONG is returned as a simple string.
     */
-    async fn handle_ping_response<R>(uuid: &Uuid, message: Option<String>, stream: &mut R)
+    async fn handle_ping_response<R>(
+        uuid: &Uuid,
+        message: Option<String>,
+        stream: &mut R,
+    ) -> io::Result<()>
     where
         R: AsyncWrite + Unpin,
     {
@@ -121,14 +126,19 @@ impl Handler {
             None => RespValue::SimpleString("PONG".to_string()),
         };
 
-        Handler::send_response(uuid, stream, response_value).await;
+        Handler::send_response(uuid, stream, response_value).await
     }
 
     /*
     Handles replies to GET commands. Replies with a bulk string containing the value corresponsing to the key.
     Replies with a NULL bulk string, if the key does not exist in the store.
     */
-    async fn handle_get_response<R>(uuid: &Uuid, key: String, stream: &mut R, store: &Store)
+    async fn handle_get_response<R>(
+        uuid: &Uuid,
+        key: String,
+        stream: &mut R,
+        store: &Store,
+    ) -> io::Result<()>
     where
         R: AsyncWrite + Unpin,
     {
@@ -140,7 +150,7 @@ impl Handler {
         );
 
         let response_value = RespValue::BulkString(stored_value);
-        Handler::send_response(uuid, stream, response_value).await;
+        Handler::send_response(uuid, stream, response_value).await
     }
 
     // Handles replies to SET commands. Inserts the key-value pair into the store and replies with a simple string: OK.
@@ -150,21 +160,27 @@ impl Handler {
         value: String,
         stream: &mut R,
         store: &Store,
-    ) where
+    ) -> io::Result<()>
+    where
         R: AsyncWrite + Unpin,
     {
         debug!("Handler {} writing key {}: {}", uuid, key, value);
         store.set(&key, value);
 
         let response_value = RespValue::SimpleString("OK".to_string());
-        Handler::send_response(uuid, stream, response_value).await;
+        Handler::send_response(uuid, stream, response_value).await
     }
 
     /*
     Handles replies to DEL commands.
     Deletes all given keys from the store and replies with an integer indicating the number deleted keys.
     */
-    async fn handle_del_response<R>(uuid: &Uuid, keys: Vec<String>, stream: &mut R, store: &Store)
+    async fn handle_del_response<R>(
+        uuid: &Uuid,
+        keys: Vec<String>,
+        stream: &mut R,
+        store: &Store,
+    ) -> io::Result<()>
     where
         R: AsyncWrite + Unpin,
     {
@@ -175,7 +191,7 @@ impl Handler {
         }
 
         let response_value = RespValue::Integer(deleted_key_count);
-        Handler::send_response(uuid, stream, response_value).await;
+        Handler::send_response(uuid, stream, response_value).await
     }
 
     /*
@@ -184,7 +200,12 @@ impl Handler {
     The command returns -2 if the key does not exist.
     The command returns -1 if the key exists but has no associated expire.
     */
-    async fn handle_ttl_response<R>(uuid: &Uuid, key: String, stream: &mut R, store: &Store)
+    async fn handle_ttl_response<R>(
+        uuid: &Uuid,
+        key: String,
+        stream: &mut R,
+        store: &Store,
+    ) -> io::Result<()>
     where
         R: AsyncWrite + Unpin,
     {
@@ -196,12 +217,15 @@ impl Handler {
         );
 
         let response_value = match expiry_instant {
-            Some(expiry) => {
-                RespValue::Integer(expiry.duration_since(Instant::now()).as_secs() as i64)
-            }
+            // Get the TTL as seconds by comparing the expiry instant to the current instant
+            Some(expiry) => match expiry.checked_duration_since(Instant::now()) {
+                Some(remaining) => RespValue::Integer(remaining.as_secs() as i64),
+                None => RespValue::Integer(-2), // The key has expired; treat as a missing key
+            },
+            // No expiry entry; check if the key exists in the store
             None => RespValue::Integer(if store.exists(&key) { -1 } else { -2 }),
         };
-        Handler::send_response(uuid, stream, response_value).await;
+        Handler::send_response(uuid, stream, response_value).await
     }
 
     /*
@@ -209,14 +233,19 @@ impl Handler {
     Removes the existing timeout on a key.
     Replies with 0 if key does not exist or does not have an associated timeout, or 1 if the timeout has been removed.
     */
-    async fn handle_persist_response<R>(uuid: &Uuid, key: String, stream: &mut R, store: &Store)
+    async fn handle_persist_response<R>(
+        uuid: &Uuid,
+        key: String,
+        stream: &mut R,
+        store: &Store,
+    ) -> io::Result<()>
     where
         R: AsyncWrite + Unpin,
     {
         trace!("Handler {} persisting key {}", uuid, key);
         let removed = store.persist(&key);
         let response_value = RespValue::Integer(removed as i64);
-        Handler::send_response(uuid, stream, response_value).await;
+        Handler::send_response(uuid, stream, response_value).await
     }
 
     /*
@@ -229,7 +258,7 @@ impl Handler {
         seconds: u64,
         stream: &mut R,
         store: &Store,
-    ) -> Result<(), HandlerError>
+    ) -> io::Result<()>
     where
         R: AsyncWrite + Unpin,
     {
@@ -239,35 +268,46 @@ impl Handler {
         );
 
         let expiration = Instant::now().checked_add(Duration::from_secs(seconds));
+        // None means that an overflow occured during the addition; reply with a generic error message
         if expiration.is_none() {
-            Handler::send_response(uuid, stream, RespValue::Integer(0)).await;
-            return Err(HandlerError::ExpireOverflow(seconds));
+            return Handler::send_response(
+                uuid,
+                stream,
+                RespValue::SimpleError("ERR invalid expire time in 'expire' command".to_string()),
+            )
+            .await;
         }
 
         let response_value = RespValue::Integer(store.set_ttl(&key, expiration.unwrap()) as i64);
-        Handler::send_response(uuid, stream, response_value).await;
-
-        Ok(())
+        Handler::send_response(uuid, stream, response_value).await
     }
 
     // Handles unknown command errors by replying with a custom error message
-    async fn handle_unknown_command_response<R>(uuid: &Uuid, e: String, stream: &mut R)
+    async fn handle_unknown_command_response<R>(
+        uuid: &Uuid,
+        e: String,
+        stream: &mut R,
+    ) -> io::Result<()>
     where
         R: AsyncWrite + Unpin,
     {
         warn!("Handler {} received unknown command: {}", uuid, e);
         let response_value = RespValue::SimpleError(format!("ERR unknown command '{}'", e));
-        Handler::send_response(uuid, stream, response_value).await;
+        Handler::send_response(uuid, stream, response_value).await
     }
 
     // Helper function to simply the response process
-    async fn send_response<R>(uuid: &Uuid, stream: &mut R, response_value: RespValue)
+    async fn send_response<R>(
+        uuid: &Uuid,
+        stream: &mut R,
+        response_value: RespValue,
+    ) -> io::Result<()>
     where
         R: AsyncWrite + Unpin,
     {
         let encoded_response = resp2::encode(&response_value);
         debug!("Handler {} sending: {:?}", uuid, response_value);
-        let _ = stream.write(&encoded_response).await;
+        stream.write_all(&encoded_response).await
     }
 }
 
@@ -282,14 +322,15 @@ mod tests {
     use crate::resp2;
 
     async fn start_handler() -> std::net::SocketAddr {
+        start_handler_with_store(Store::new()).await
+    }
+
+    async fn start_handler_with_store(store: Store) -> std::net::SocketAddr {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             let (socket, _) = listener.accept().await.unwrap();
-            Handler::new(socket, Store::new())
-                .run_handler()
-                .await
-                .unwrap();
+            Handler::new(socket, store).run_handler().await.unwrap();
         });
         addr
     }
@@ -556,6 +597,25 @@ mod tests {
             RespValue::Integer(secs) => assert!(secs > 0 && secs <= 60),
             _ => panic!("expected integer response"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_ttl_expired_key() {
+        use std::time::{Duration, Instant};
+        let store = Store::new();
+        store.set("foo", "bar".to_string());
+        store.set_ttl("foo", Instant::now() - Duration::from_secs(1));
+
+        let addr = start_handler_with_store(store).await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        client
+            .write_all(b"*2\r\n$3\r\nTTL\r\n$3\r\nfoo\r\n")
+            .await
+            .unwrap();
+
+        let response = resp2::decode(&mut client).await.unwrap();
+        assert_eq!(response, RespValue::Integer(-2));
     }
 
     #[tokio::test]
