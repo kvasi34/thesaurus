@@ -2,7 +2,7 @@
 
 ## Architecture
 
-![Architecture diagram](docs/architecture.svg)
+![Architecture diagram](docs/dev/architecture.svg)
 
 **Components:**
 - **TCP listener** — accepts incoming connections and spawns a handler task per client
