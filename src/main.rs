@@ -25,9 +25,9 @@ async fn main() -> io::Result<()> {
     debug!("Parsed command: {:?}", args);
 
     let cfg = match args.config.as_deref() {
-        Some(path) => config::load_config(path).map_err(|e| {
-            io::Error::new(io::ErrorKind::InvalidInput, e)
-        })?,
+        Some(path) => {
+            config::load_config(path).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?
+        }
         None => {
             debug!("No config file specified. Using defaults.");
             config::ThesaurusConfig::default()
