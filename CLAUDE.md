@@ -7,13 +7,14 @@ A Redis-compatible in-memory key-value store written in Rust, using the RESP2 pr
 - `main.rs` — entry point; binds the TCP listener, accepts connections, spawns handler tasks, handles shutdown
 - `handler.rs` — per-connection handler; decodes RESP2 input, dispatches commands, writes responses
 - `command.rs` — CLI argument parsing (via clap) and RESP2-to-command parsing
+- `config.rs` — INI config file loading via the `config` crate; exposes `ThesaurusConfig`
 - `resp2.rs` — RESP2 protocol encoder and decoder
 - `store.rs` — shared in-memory `HashMap` wrapped in `Arc<RwLock>` for concurrent access
 - `errors.rs` — error types for the handler and RESP2 layers
 
 ## Commands
 
-Supported: `PING`, `GET`, `SET`, `DEL`
+Supported: `PING`, `GET`, `SET`, `DEL`, `EXISTS`, `EXPIRE`, `TTL`, `PERSIST`
 
 ## Running
 
@@ -21,10 +22,12 @@ Supported: `PING`, `GET`, `SET`, `DEL`
 cargo run -- [OPTIONS]
 
 Options:
-  --bind <BIND>                       [env: THESAURUS_BIND] [default: 127.0.0.1]
-  --port <PORT>                       [env: THESAURUS_PORT] [default: 6379]
-  --max-connections <MAX_CONNECTIONS> [env: THESAURUS_MAX_CONNECTIONS] [default: 100]
+  --bind <BIND>     [env: THESAURUS_BIND]   [default: 127.0.0.1]
+  --port <PORT>     [env: THESAURUS_PORT]   [default: 6379]
+  --config <CONFIG> [env: THESAURUS_CONFIG]
 ```
+
+Server behaviour (connection limits, TTL eviction rate) is configured via an INI file passed with `--config`. See `config.ini` for available keys and their defaults. Environment variables prefixed with `THESAURUS_` override file values.
 
 ## Development commands
 

@@ -15,13 +15,9 @@ pub(crate) struct Cli {
     #[arg(long, default_value_t = 6379, env = "THESAURUS_PORT")]
     pub port: u16,
 
-    /// Max TCP socket connections
-    #[arg(long, default_value_t = 100, env = "THESAURUS_MAX_CONNECTIONS")]
-    pub max_connections: usize,
-
-    /// TTL eviction sampling interval in milliseconds
-    #[arg(long, default_value_t = 100, env = "THESAURUS_HZ")]
-    pub hz: u64,
+    /// INI configuration file path
+    #[arg(long, env = "THESAURUS_CONFIG")]
+    pub config: Option<String>,
 }
 
 /// Command parsed from raw TCP client input.

@@ -21,7 +21,7 @@ TcpListener::bind(addr)
    └─ Ctrl+C → semaphore.close(), break│
 ```
 
-A `Semaphore` with capacity `--max-connections` (default: 100) caps concurrent tasks. If the semaphore is closed (shutdown), the accept loop exits. Active handlers finish naturally; there is no forced cancellation.
+A `Semaphore` with capacity `max_connections` (default: 100, configured via `config.ini`) caps concurrent tasks. If the semaphore is closed (shutdown), the accept loop exits. Active handlers finish naturally; there is no forced cancellation.
 
 ## Command Lifecycle
 
