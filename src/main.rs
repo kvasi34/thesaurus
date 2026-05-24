@@ -1,4 +1,5 @@
 mod command;
+mod config;
 mod errors;
 mod handler;
 mod resp2;
@@ -23,17 +24,28 @@ async fn main() -> io::Result<()> {
     let args = Cli::parse();
     debug!("Parsed command: {:?}", args);
 
+    let cfg = match args.config.as_deref() {
+        Some(path) => config::load_config(path).map_err(|e| {
+            io::Error::new(io::ErrorKind::InvalidInput, e)
+        })?,
+        None => {
+            debug!("No config file specified. Using defaults.");
+            config::ThesaurusConfig::default()
+        }
+    };
+    debug!("Running with config: {:?}", cfg);
+
     // Initialize the store
     let store = store::Store::new();
 
     // Spawn the TTL eviction daemon task, which clears expired keys
     let daemon_store = store.clone();
     tokio::spawn(async move {
-        ttl::TtlEvictionDaemon::spawn(args.hz, daemon_store).await;
+        ttl::TtlEvictionDaemon::spawn(cfg.hz, daemon_store).await;
     });
 
     // Define semaphore to limit the number of Tokio tasks
-    let semaphore = Arc::new(Semaphore::new(args.max_connections));
+    let semaphore = Arc::new(Semaphore::new(cfg.max_connections));
 
     // Start the TCP listener
     let address = format!("{}:{}", args.bind, args.port);
