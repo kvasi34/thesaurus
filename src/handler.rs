@@ -1,18 +1,13 @@
 use log::{debug, warn};
-use tokio::io::{self, BufReader};
+use tokio::io::{self, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use uuid::Uuid;
 
-use crate::responses::{
-    handle_del_response, handle_exists_response, handle_expire_response, handle_get_response,
-    handle_persist_response, handle_ping_response, handle_set_response, handle_ttl_response,
-    handle_unknown_command_response, send_response,
-};
 use crate::{
     command::Command,
     errors::{HandlerError, RespError},
+    executor::Executor,
     resp2::{self, RespValue},
-    store::Store,
 };
 
 /// TCP socket connection handler.
@@ -20,16 +15,16 @@ use crate::{
 pub(crate) struct Handler {
     uuid: Uuid,
     socket: TcpStream,
-    store: Store,
+    executor: Executor,
 }
 
 impl Handler {
     /// Constructor for `Handler` struct.
-    pub fn new(socket: TcpStream, store: Store) -> Self {
+    pub fn new(socket: TcpStream, executor: Executor) -> Self {
         Handler {
             uuid: Uuid::new_v4(),
             socket,
-            store,
+            executor,
         }
     }
 
@@ -37,7 +32,8 @@ impl Handler {
     ///
     /// Runs until the client closes the connection or an unrecoverable decode
     /// error occurs. Each iteration decodes one RESP2 message, parses it into
-    /// a [`Command`], and writes the appropriate RESP2 response back to the socket.
+    /// a [`Command`], executes it via [`Executor`], and writes the RESP2
+    /// response back to the socket.
     pub async fn run_handler(self) -> io::Result<()> {
         debug!("Handler {} started", self.uuid);
 
@@ -54,53 +50,38 @@ impl Handler {
                     return Err(e.into());
                 }
             };
+
             let cmd = Command::from_resp2(&resp_value);
             debug!("Handler {} received command: {:?}", self.uuid, cmd);
 
-            match cmd {
-                Ok(Command::Ping { message }) => {
-                    handle_ping_response(&self.uuid, message, &mut stream).await?;
-                }
-                Ok(Command::Get { key }) => {
-                    handle_get_response(&self.uuid, key, &mut stream, &self.store).await?;
-                }
-                Ok(Command::Set { key, value }) => {
-                    handle_set_response(&self.uuid, key, value, &mut stream, &self.store).await?;
-                }
-                Ok(Command::Delete { keys }) => {
-                    handle_del_response(&self.uuid, keys, &mut stream, &self.store).await?;
-                }
-                Ok(Command::Exists { keys }) => {
-                    handle_exists_response(&self.uuid, keys, &mut stream, &self.store).await?;
-                }
-                Ok(Command::Ttl { key }) => {
-                    handle_ttl_response(&self.uuid, key, &mut stream, &self.store).await?;
-                }
-                Ok(Command::Persist { key }) => {
-                    handle_persist_response(&self.uuid, key, &mut stream, &self.store).await?;
-                }
-                Ok(Command::Expire { key, seconds }) => {
-                    handle_expire_response(&self.uuid, key, seconds, &mut stream, &self.store)
-                        .await?;
-                }
+            let response = match cmd {
+                Ok(cmd) => self.executor.execute(&cmd),
                 Err(HandlerError::UnknownCommand(s)) => {
-                    handle_unknown_command_response(&self.uuid, s, &mut stream).await?;
+                    warn!("Handler {} received unknown command: {}", self.uuid, s);
+                    RespValue::SimpleError(format!("ERR unknown command '{}'", s))
                 }
                 Err(e) => {
                     warn!("Handler {} command parse error: {}", self.uuid, e);
-                    send_response(
-                        &self.uuid,
-                        &mut stream,
-                        RespValue::SimpleError(e.to_string()),
-                    )
-                    .await?;
+                    RespValue::SimpleError(e.to_string())
                 }
-            }
+            };
+
+            send_response(&self.uuid, &mut stream, response).await?;
         }
 
         debug!("Handler {} stopped", self.uuid);
         Ok(())
     }
+}
+
+/// Encodes `response_value` and writes it to `stream`.
+async fn send_response<W>(uuid: &Uuid, stream: &mut W, response_value: RespValue) -> io::Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
+    let encoded = resp2::encode(&response_value);
+    debug!("Handler {} sending: {:?}", uuid, response_value);
+    stream.write_all(&encoded).await
 }
 
 #[cfg(test)]
@@ -111,7 +92,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::resp2;
+    use crate::{executor::Executor, resp2, store::Store};
 
     async fn start_handler() -> std::net::SocketAddr {
         start_handler_with_store(Store::new()).await
@@ -122,7 +103,10 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             let (socket, _) = listener.accept().await.unwrap();
-            Handler::new(socket, store).run_handler().await.unwrap();
+            Handler::new(socket, Executor::new(store))
+                .run_handler()
+                .await
+                .unwrap();
         });
         addr
     }
