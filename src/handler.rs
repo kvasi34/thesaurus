@@ -469,4 +469,129 @@ mod tests {
         let response = resp2::decode(&mut client).await.unwrap();
         assert_eq!(response, RespValue::Integer(1));
     }
+
+    // Builds a PEXPIREAT command for `key` with a deadline `offset_ms` milliseconds from now.
+    fn pexpireat_cmd(key: &str, offset_ms: i64) -> Vec<u8> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let deadline = (now_ms + offset_ms).to_string();
+        resp2::encode(&RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("PEXPIREAT".to_string())),
+            RespValue::BulkString(Some(key.to_string())),
+            RespValue::BulkString(Some(deadline)),
+        ])))
+    }
+
+    #[tokio::test]
+    async fn test_pexpireat_existing_key() {
+        let addr = start_handler().await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        client
+            .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+            .await
+            .unwrap();
+        resp2::decode(&mut client).await.unwrap();
+
+        client
+            .write_all(&pexpireat_cmd("foo", 60_000))
+            .await
+            .unwrap();
+
+        let response = resp2::decode(&mut client).await.unwrap();
+        assert_eq!(response, RespValue::Integer(1));
+    }
+
+    #[tokio::test]
+    async fn test_pexpireat_missing_key() {
+        let addr = start_handler().await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        client
+            .write_all(&pexpireat_cmd("missing", 60_000))
+            .await
+            .unwrap();
+
+        let response = resp2::decode(&mut client).await.unwrap();
+        assert_eq!(response, RespValue::Integer(0));
+    }
+
+    #[tokio::test]
+    async fn test_pexpireat_deadline_in_past() {
+        let addr = start_handler().await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        // Use a hardcoded timestamp from the past (1 second after the Unix epoch)
+        client
+            .write_all(b"*3\r\n$9\r\nPEXPIREAT\r\n$3\r\nfoo\r\n$4\r\n1000\r\n")
+            .await
+            .unwrap();
+
+        let response = resp2::decode(&mut client).await.unwrap();
+        assert_eq!(response, RespValue::Integer(0));
+    }
+
+    #[tokio::test]
+    async fn test_ttl_after_pexpireat() {
+        let addr = start_handler().await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        client
+            .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+            .await
+            .unwrap();
+        resp2::decode(&mut client).await.unwrap();
+
+        // Set TTL to 60 seconds from now via PEXPIREAT
+        client
+            .write_all(&pexpireat_cmd("foo", 60_000))
+            .await
+            .unwrap();
+        resp2::decode(&mut client).await.unwrap();
+
+        client
+            .write_all(b"*2\r\n$3\r\nTTL\r\n$3\r\nfoo\r\n")
+            .await
+            .unwrap();
+
+        let response = resp2::decode(&mut client).await.unwrap();
+        match response {
+            RespValue::Integer(secs) => assert!(secs > 0 && secs <= 60),
+            _ => panic!("expected integer response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_select_ok() {
+        let addr = start_handler().await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        client
+            .write_all(b"*2\r\n$6\r\nSELECT\r\n$1\r\n0\r\n")
+            .await
+            .unwrap();
+
+        let response = resp2::decode(&mut client).await.unwrap();
+        assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_select_out_of_index() {
+        let addr = start_handler().await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        client
+            .write_all(b"*2\r\n$6\r\nSELECT\r\n$1\r\n1\r\n")
+            .await
+            .unwrap();
+
+        let response = resp2::decode(&mut client).await.unwrap();
+        assert_eq!(
+            response,
+            RespValue::SimpleError("ERR DB index is out of range".to_string())
+        );
+    }
 }

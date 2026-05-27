@@ -44,6 +44,8 @@ pub(crate) enum HandlerError {
     WrongArity { expected: u8, got: u8 },
     /// The received command does not contain an integer.
     NotAnInteger(String),
+    /// The database index provided to SELECT is out of range.
+    DbIndexOutOfRange,
 }
 
 impl fmt::Display for HandlerError {
@@ -63,6 +65,7 @@ impl fmt::Display for HandlerError {
                 expected, got
             ),
             HandlerError::NotAnInteger(s) => write!(f, "not an integer: '{}'", s),
+            HandlerError::DbIndexOutOfRange => write!(f, "ERR DB index is out of range"),
         }
     }
 }

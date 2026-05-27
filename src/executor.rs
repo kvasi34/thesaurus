@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use log::{debug, trace};
 
@@ -86,6 +86,26 @@ impl Executor {
                     ),
                     Some(deadline) => RespValue::Integer(self.store.set_ttl(key, deadline) as i64),
                 }
+            }
+
+            Command::PExpireAt { key, deadline_ms } => {
+                let now_duration = SystemTime::now().duration_since(UNIX_EPOCH);
+                if now_duration.is_err() {
+                    return RespValue::Integer(0);
+                }
+
+                let now_ms = now_duration.unwrap_or_default().as_millis() as u64;
+                let remaining_ms = deadline_ms.saturating_sub(now_ms);
+                let deadline = Instant::now() + Duration::from_millis(remaining_ms);
+                RespValue::Integer(self.store.set_ttl(key, deadline) as i64)
+            }
+
+            Command::Select { index } => {
+                if *index != 0 {
+                    return RespValue::SimpleError("ERR DB index is out of range".to_string());
+                }
+
+                RespValue::SimpleString("OK".to_string())
             }
         }
     }

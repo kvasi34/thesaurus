@@ -34,9 +34,9 @@ TCP bytes
    │
    ▼  Command::from_resp2()    validates & parses → Command enum variant
    │
-   ▼  Handler::run_handler()   matches variant → calls handle_*_response()
+   ▼  Executor::execute()      applies command to Store → RespValue
    │
-   ▼  responses/*              talks to Store, builds reply → resp2::encode()
+   ▼  resp2::encode()          serialises reply → Handler writes to socket
    │
 TCP bytes (response)
 ```
@@ -71,19 +71,8 @@ The result is a typed `Command` variant:
 Command::Set { key: "foo", value: "bar" }
 ```
 
-### 3. Dispatch and execution (`src/handler.rs`, `src/responses/`)
+### 3. Dispatch and execution (`src/handler.rs`, `src/executor.rs`)
 
-`Handler::run_handler()` matches on the `Command` variant and calls the corresponding function in `src/responses/`. Each response function:
+`Handler::run_handler()` passes the parsed `Command` to `Executor::execute()`, which applies it to the shared `Store` and returns a `RespValue`. The handler then encodes and writes that value back to the socket.
 
-1. Reads from or writes to the shared `Store`.
-2. Constructs a `RespValue` reply.
-3. Calls `resp2::encode()` and writes the bytes back to the socket.
-
-### Error handling
-
-| Error kind | Cause | Outcome |
-|---|---|---|
-| `UnknownCommand` | Unrecognised command name | `SimpleError` reply; connection stays open |
-| Parse error (arity, type) | Malformed arguments | `SimpleError` reply; connection stays open |
-| RESP2 decode error | Malformed frame | Handler loop exits, task ends |
-| `UnexpectedEof` | Client disconnected | Clean exit |
+`Executor` is the single place where commands mutate or read state. It is created once in `main.rs` and cloned cheaply (via the inner `Arc`) into each connection handler. This separation means the same execution path can be driven by AOF replay without a socket being involved.
