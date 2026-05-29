@@ -1,3 +1,4 @@
+mod aof;
 mod command;
 mod config;
 mod errors;
@@ -38,17 +39,24 @@ async fn main() -> io::Result<()> {
     // Initialize the store
     let store = store::Store::new();
 
+    // Wrap the store in an executor; cloned cheaply into each connection handler
+    let executor = executor::Executor::new(store.clone());
+
+    let aof_writer = aof::open(
+        cfg.appendonly,
+        &cfg.appenddirname,
+        &cfg.appendfilename,
+        cfg.appendfsync,
+    )?;
+
+    // Define semaphore to limit the number of handlers
+    let semaphore = Arc::new(Semaphore::new(cfg.max_connections));
+
     // Spawn the TTL eviction daemon task, which clears expired keys
     let daemon_store = store.clone();
     tokio::spawn(async move {
         ttl::TtlEvictionDaemon::spawn(cfg.hz, daemon_store).await;
     });
-
-    // Wrap the store in an executor; cloned cheaply into each connection handler
-    let executor = executor::Executor::new(store);
-
-    // Define semaphore to limit the number of Tokio tasks
-    let semaphore = Arc::new(Semaphore::new(cfg.max_connections));
 
     // Start the TCP listener
     let address = format!("{}:{}", args.bind, args.port);
@@ -66,7 +74,7 @@ async fn main() -> io::Result<()> {
                 };
 
                 // Spawn handler instance and pass the socket connection
-                let handler = handler::Handler::new(socket, executor.clone());
+                let handler = handler::Handler::new(socket, executor.clone(), aof_writer.clone());
                 tokio::spawn(async move {
                     if let Err(e) = handler.run_handler().await {
                         warn!("Error while running task at socket {:?}\n{}", socket_address, e);

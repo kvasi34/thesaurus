@@ -96,6 +96,18 @@ impl Command {
         }
     }
 
+    /// Returns `true` if this command mutates store state. Used to check if a command must be appended to the AOF log.
+    pub fn is_write(&self) -> bool {
+        matches!(
+            self,
+            Command::Set { .. }
+                | Command::Delete { .. }
+                | Command::Expire { .. }
+                | Command::PExpireAt { .. }
+                | Command::Persist { .. }
+        )
+    }
+
     /// Helper function to parse the arguments of a PING command into a `Command::Ping` struct.
     fn parse_ping_command(args: &[RespValue]) -> Result<Self, HandlerError> {
         if args.len() == 1 {

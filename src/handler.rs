@@ -1,8 +1,9 @@
-use log::{debug, warn};
+use log::{debug, error, warn};
 use tokio::io::{self, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use uuid::Uuid;
 
+use crate::aof::AofWriter;
 use crate::{
     command::Command,
     errors::{HandlerError, RespError},
@@ -16,15 +17,17 @@ pub(crate) struct Handler {
     uuid: Uuid,
     socket: TcpStream,
     executor: Executor,
+    aof_writer: Option<AofWriter>,
 }
 
 impl Handler {
     /// Constructor for `Handler` struct.
-    pub fn new(socket: TcpStream, executor: Executor) -> Self {
+    pub fn new(socket: TcpStream, executor: Executor, aof_writer: Option<AofWriter>) -> Self {
         Handler {
             uuid: Uuid::new_v4(),
             socket,
             executor,
+            aof_writer,
         }
     }
 
@@ -34,11 +37,12 @@ impl Handler {
     /// error occurs. Each iteration decodes one RESP2 message, parses it into
     /// a [`Command`], executes it via [`Executor`], and writes the RESP2
     /// response back to the socket.
-    pub async fn run_handler(self) -> io::Result<()> {
+    pub async fn run_handler(mut self) -> io::Result<()> {
         debug!("Handler {} started", self.uuid);
 
         let mut stream = BufReader::new(self.socket);
         loop {
+            // Read from the socket and decode the RESP value into a `RespValue` struct
             let resp_value = match resp2::decode(&mut stream).await {
                 Ok(v) => v,
                 Err(RespError::UnexpectedEof) => {
@@ -51,9 +55,15 @@ impl Handler {
                 }
             };
 
+            // Convert the `RespValue` into a `Command` struct
             let cmd = Command::from_resp2(&resp_value);
             debug!("Handler {} received command: {:?}", self.uuid, cmd);
 
+            // Capture the write flag before cmd is consumed by the match statement below
+            let is_write_cmd = cmd.as_ref().is_ok_and(|c| c.is_write());
+
+            // Execute the command using the `Executor` and generate the appropriate response
+            // The `Executor` instance is responsible for both executing the command at the `Store` and generating a `RespValue` response
             let response = match cmd {
                 Ok(cmd) => self.executor.execute(&cmd),
                 Err(HandlerError::UnknownCommand(s)) => {
@@ -65,6 +75,15 @@ impl Handler {
                     RespValue::SimpleError(e.to_string())
                 }
             };
+
+            // Call the AOF writer if the `appendonly` configuration is set to `on`
+            if is_write_cmd
+                && !matches!(response, RespValue::SimpleError(_))
+                && let Some(writer) = self.aof_writer.as_mut()
+                && let Err(e) = writer.append(&resp2::encode(&resp_value))
+            {
+                error!("Handler {} failed to write to AOF: {}", self.uuid, e);
+            }
 
             send_response(&self.uuid, &mut stream, response).await?;
         }
@@ -103,7 +122,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             let (socket, _) = listener.accept().await.unwrap();
-            Handler::new(socket, Executor::new(store))
+            Handler::new(socket, Executor::new(store), None)
                 .run_handler()
                 .await
                 .unwrap();
