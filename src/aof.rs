@@ -6,9 +6,11 @@ use std::{
     time::Duration,
 };
 
-use log::{debug, error};
+use log::{debug, error, info, warn};
 
-/// Appends write commands to the AOF file so the dataset can be reconstructed on restart.
+use crate::{command::Command, errors, executor::Executor, resp2};
+
+/// Appends write commands to the AOF so the dataset can be reconstructed on restart.
 ///
 /// Cheaply cloneable — all clones share the same underlying file handle via [`Arc`].
 #[derive(Clone, Debug)]
@@ -22,7 +24,7 @@ struct Writer {
     file: io::BufWriter<File>,
 }
 
-/// Controls how often the AOF file is fsynced to disk.
+/// Controls how often the AOF is fsynced to disk.
 ///
 /// Higher durability means lower throughput — `Always` is the safest but slowest,
 /// `No` is the fastest but risks losing up to ~30 seconds of writes on a crash.
@@ -37,10 +39,10 @@ pub(crate) enum AppendFSyncMode {
 }
 
 impl AofWriter {
-    /// Opens or creates the AOF file at `path`, creating any missing parent directories.
+    /// Opens or creates the AOF at `path`, creating any missing parent directories.
     pub fn new(path: &Path, fsync_mode: AppendFSyncMode) -> io::Result<Self> {
         // Create any intermidiate directories in the complete path
-        // e.g. path = /foo/bar/appendonly.aof, foo will be created if it doesn't exist
+        // e.g. path = /foo/bar/appendonly.aof, foo/bar/ will be created if they don't exist
         //
         // filter(|p| !p.as_os_str().is_empty()) guards against create_dir_all("") when
         // the path has no directory component (e.g. a bare filename)
@@ -58,7 +60,7 @@ impl AofWriter {
         })
     }
 
-    /// Appends a RESP2-encoded command to the AOF file.
+    /// Appends a RESP2-encoded command to the AOF.
     ///
     /// Always flushes to the kernel page cache. Fsyncs to disk immediately for
     /// [`AppendFSyncMode::Always`]; the `everysec` task handles the periodic fsync otherwise.
@@ -76,7 +78,7 @@ impl AofWriter {
         Ok(())
     }
 
-    /// Spawns a background task that fsyncs the AOF file to disk once per second.
+    /// Spawns a background task that fsyncs the AOF to disk once per second.
     ///
     /// No-op if the mode is not [`AppendFSyncMode::EverySec`]. The task runs until
     /// the tokio runtime shuts down. For a clean final fsync on shutdown, see the
@@ -100,7 +102,7 @@ impl AofWriter {
     }
 }
 
-/// Opens the AOF file and starts the background fsync task if needed.
+/// Opens the AOF and starts the background fsync task if needed.
 ///
 /// Returns `None` when `enabled` is `false` so callers stay unaware of AOF internals.
 pub(crate) fn open(
@@ -112,26 +114,92 @@ pub(crate) fn open(
     if !enabled {
         return Ok(None);
     }
+
     let path = resolve_aof_path(dirname, filename);
     let writer = AofWriter::new(&path, fsync_mode).map_err(|e| {
         io::Error::new(
             e.kind(),
-            format!("Failed to open AOF file at '{}': {}", path.display(), e),
+            format!("Failed to open AOF at '{}': {}", path.display(), e),
         )
     })?;
     writer.spawn_fsync_task();
     Ok(Some(writer))
 }
 
-/// Builds the full path to the AOF file from the configured directory and filename.
+/// Builds the full path to the AOF from the configured directory and filename.
 pub(crate) fn resolve_aof_path(dirname: &str, filename: &str) -> PathBuf {
     Path::new(dirname).join(filename)
+}
+
+/// Reads the AOF and applies all commands in chronological order. This way, the store is essentially re-built.
+pub(crate) fn sync_store_with_aof(
+    enabled: bool,
+    dirname: &str,
+    filename: &str,
+    executor: Executor,
+) -> io::Result<()> {
+    if !enabled {
+        return Ok(());
+    }
+
+    let path = resolve_aof_path(dirname, filename);
+    if !std::fs::exists(&path)? {
+        info!("No AOF at {} to sync from", path.display());
+        return Ok(());
+    }
+
+    let append_only_file = File::open(&path)?;
+    let mut reader = io::BufReader::new(append_only_file);
+
+    loop {
+        // Decode RESP value
+        let resp_value = match resp2::decode(&mut reader) {
+            Ok(v) => v,
+            Err(errors::RespError::UnexpectedEof) => {
+                info!("Synced with AOF: {}", path.display());
+                break;
+            }
+            Err(e) => {
+                warn!("AOF syncing failed with {}", e);
+                return Err(e.into());
+            }
+        };
+
+        // Parse RESP value into a native `Command` struct
+        let cmd = match Command::from_resp2(&resp_value) {
+            Ok(cmd) => cmd,
+            Err(e) => {
+                warn!("Malformed AOF entry: {}", e);
+                continue;
+            }
+        };
+
+        // Call the executor to apply the cmd to the store
+        executor.execute(&cmd);
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+
+    use crate::{executor::Executor, resp2::RespValue, store::Store};
+
+    // Writes a sequence of commands to a file as RESP2 bytes.
+    fn write_aof(path: &Path, commands: &[&[&str]]) {
+        let mut bytes = Vec::new();
+        for cmd in commands {
+            bytes.extend_from_slice(&resp2::encode(&RespValue::Array(Some(
+                cmd.iter()
+                    .map(|s| RespValue::BulkString(Some(s.to_string())))
+                    .collect(),
+            ))));
+        }
+        fs::write(path, bytes).unwrap();
+    }
 
     #[test]
     fn test_append_writes_bytes() {
@@ -190,5 +258,100 @@ mod tests {
     fn test_resolve_aof_path() {
         let path = resolve_aof_path("appendonlydir", "appendonly.aof");
         assert_eq!(path, PathBuf::from("appendonlydir/appendonly.aof"));
+    }
+
+    #[test]
+    fn test_sync_store_replays_set_and_del() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("appendonly.aof");
+        write_aof(
+            &path,
+            &[
+                &["SET", "foo", "bar"],
+                &["SET", "baz", "qux"],
+                &["DEL", "foo"],
+            ],
+        );
+
+        let store = Store::new();
+        sync_store_with_aof(
+            true,
+            dir.path().to_str().unwrap(),
+            "appendonly.aof",
+            Executor::new(store.clone()),
+        )
+        .unwrap();
+
+        assert_eq!(store.get("foo"), None);
+        assert_eq!(store.get("baz"), Some("qux".to_string()));
+    }
+
+    #[test]
+    fn test_sync_store_replays_pexpireat_future() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("appendonly.aof");
+        let future_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+            + 60_000;
+        write_aof(
+            &path,
+            &[
+                &["SET", "foo", "bar"],
+                &["PEXPIREAT", "foo", &future_ms.to_string()],
+            ],
+        );
+
+        let store = Store::new();
+        sync_store_with_aof(
+            true,
+            dir.path().to_str().unwrap(),
+            "appendonly.aof",
+            Executor::new(store.clone()),
+        )
+        .unwrap();
+
+        assert_eq!(store.get("foo"), Some("bar".to_string()));
+        assert!(store.get_ttl("foo").is_some());
+    }
+
+    #[test]
+    fn test_sync_store_replays_pexpireat_past() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("appendonly.aof");
+        write_aof(
+            &path,
+            &[
+                &["SET", "foo", "bar"],
+                &["PEXPIREAT", "foo", "1000"], // 1 second after Unix epoch — definitely past
+            ],
+        );
+
+        let store = Store::new();
+        sync_store_with_aof(
+            true,
+            dir.path().to_str().unwrap(),
+            "appendonly.aof",
+            Executor::new(store.clone()),
+        )
+        .unwrap();
+
+        assert_eq!(store.get("foo"), None);
+    }
+
+    #[test]
+    fn test_sync_store_disabled_skips() {
+        let store = Store::new();
+        // enabled=false: should not attempt to open any file
+        let result = sync_store_with_aof(
+            false,
+            "nonexistent",
+            "file.aof",
+            Executor::new(store.clone()),
+        );
+        assert!(result.is_ok());
     }
 }

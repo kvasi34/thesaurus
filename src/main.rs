@@ -12,7 +12,7 @@ use std::io;
 use std::sync::Arc;
 
 use clap::Parser;
-use log::{debug, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 
@@ -34,7 +34,7 @@ async fn main() -> io::Result<()> {
             config::ThesaurusConfig::default()
         }
     };
-    debug!("Running with config: {:?}", cfg);
+    info!("Running with config: {:?}", cfg);
 
     // Initialize the store
     let store = store::Store::new();
@@ -42,6 +42,19 @@ async fn main() -> io::Result<()> {
     // Wrap the store in an executor; cloned cheaply into each connection handler
     let executor = executor::Executor::new(store.clone());
 
+    if let Err(e) = aof::sync_store_with_aof(
+        cfg.appendonly,
+        &cfg.appenddirname,
+        &cfg.appendfilename,
+        executor.clone(),
+    ) {
+        error!(
+            "Sync with AOF {} failed: {}",
+            aof::resolve_aof_path(&cfg.appenddirname, &cfg.appendfilename).display(),
+            e
+        );
+        return Err(io::Error::new(e.kind(), e));
+    }
     let aof_writer = aof::open(
         cfg.appendonly,
         &cfg.appenddirname,

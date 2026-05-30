@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use log::{debug, trace};
+use log::trace;
 
 use crate::command::Command;
 use crate::resp2::RespValue;
@@ -43,14 +43,14 @@ impl Executor {
             }
 
             Command::Set { key, value } => {
-                debug!("SET {} = {}", key, value);
+                trace!("SET {} = {}", key, value);
                 self.store.set(key, value.clone());
                 RespValue::SimpleString("OK".to_string())
             }
 
             Command::Delete { keys } => {
                 let count: i64 = keys.iter().map(|k| self.store.delete(k) as i64).sum();
-                debug!("DEL {:?}: deleted {}", keys, count);
+                trace!("DEL {:?}: deleted {}", keys, count);
                 RespValue::Integer(count)
             }
 
@@ -79,6 +79,7 @@ impl Executor {
             }
 
             Command::Expire { key, seconds } => {
+                trace!("EXPIRE {} {}", key, seconds);
                 match Instant::now().checked_add(Duration::from_secs(*seconds)) {
                     // checked_add returns None on overflow — reject with an error
                     None => RespValue::SimpleError(
@@ -89,6 +90,7 @@ impl Executor {
             }
 
             Command::PExpireAt { key, deadline_ms } => {
+                trace!("PEXPIREAT {} {}", key, deadline_ms);
                 let now_duration = SystemTime::now().duration_since(UNIX_EPOCH);
                 if now_duration.is_err() {
                     return RespValue::Integer(0);
