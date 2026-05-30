@@ -30,18 +30,25 @@ Every command travels through four stages:
 ```
 TCP bytes
    │
-   ▼  resp2::decode()          reads one RESP2 frame → RespValue
+   ▼  resp2::decode_async()    reads one RESP2 frame → RespValue
    │
    ▼  Command::from_resp2()    validates & parses → Command enum variant
    │
-   ▼  Handler::run_handler()   matches variant → calls handle_*_response()
+   ▼  Executor::execute()      applies command to Store → RespValue
    │
-   ▼  responses/*              talks to Store, builds reply → resp2::encode()
+   ▼  resp2::encode()          serialises reply → Handler writes to socket
    │
 TCP bytes (response)
 ```
 
+For write commands (`SET`, `DEL`, `EXPIRE`, `PERSIST`, `PEXPIREAT`), the handler also appends the command to the AOF after a successful execution (see [AOF persistence](#aof-persistence) below). `EXPIRE` is stored as `PEXPIREAT` with an absolute Unix millisecond deadline so TTLs survive restarts correctly.
+
 ### 1. RESP2 framing (`src/resp2.rs`)
+
+`resp2.rs` exposes two decoders:
+
+- `decode_async` — used by the connection handler for live client traffic (async, reads from a `tokio::io::BufReader`)
+- `decode` — used by AOF replay at startup (sync, reads from a `std::io::BufReader`)
 
 Clients speak [RESP2](https://redis.io/docs/latest/develop/reference/protocol-spec/). Commands arrive as arrays of bulk strings:
 
@@ -71,19 +78,26 @@ The result is a typed `Command` variant:
 Command::Set { key: "foo", value: "bar" }
 ```
 
-### 3. Dispatch and execution (`src/handler.rs`, `src/responses/`)
+### 3. Dispatch and execution (`src/handler.rs`, `src/executor.rs`)
 
-`Handler::run_handler()` matches on the `Command` variant and calls the corresponding function in `src/responses/`. Each response function:
+`Handler::run_handler()` passes the parsed `Command` to `Executor::execute()`, which applies it to the shared `Store` and returns a `RespValue`. The handler then encodes and writes that value back to the socket.
 
-1. Reads from or writes to the shared `Store`.
-2. Constructs a `RespValue` reply.
-3. Calls `resp2::encode()` and writes the bytes back to the socket.
+`Executor` is the single place where commands mutate or read state. It is created once in `main.rs` and cloned cheaply (via the inner `Arc`) into each connection handler. This separation means the same execution path can be driven by AOF replay without a socket being involved.
 
-### Error handling
+## AOF persistence
 
-| Error kind | Cause | Outcome |
-|---|---|---|
-| `UnknownCommand` | Unrecognised command name | `SimpleError` reply; connection stays open |
-| Parse error (arity, type) | Malformed arguments | `SimpleError` reply; connection stays open |
-| RESP2 decode error | Malformed frame | Handler loop exits, task ends |
-| `UnexpectedEof` | Client disconnected | Clean exit |
+AOF is opt-in (`appendonly = yes` in `config.ini`). When enabled:
+
+**Write path** — after a write command succeeds, `Handler` appends the RESP2-encoded command to an `AofWriter`. `EXPIRE` is rewritten as `PEXPIREAT` with an absolute Unix millisecond deadline before being appended, so replaying the file after a restart sets the correct remaining TTL rather than resetting the clock.
+
+**Startup replay** — before the TCP listener opens, `aof::sync_store_with_aof` reads the AOF with the sync `resp2::decode`, parses each entry via `Command::from_resp2`, and drives it through the same `Executor`. The store is fully restored before any client can connect.
+
+**Fsync modes** — controlled by `appendfsync`:
+
+| Mode       | Behaviour |
+|------------|-----------|
+| `always`   | `fdatasync` after every append — zero data loss, highest I/O cost |
+| `everysec` | background task fsyncs once per second — at most ~1 s of data loss |
+| `no`       | OS decides when to flush — fastest, up to ~30 s of potential loss |
+
+**AofWriter** — a cheaply cloneable `Arc<Mutex<BufWriter<File>>>` shared across handler tasks. The `BufWriter` is always flushed to the kernel page cache on every append; the fsync mode only controls when it reaches physical disk.

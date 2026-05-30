@@ -46,9 +46,15 @@ cargo audit     # requires: cargo install cargo-audit
 
 ## Supported commands
 
-| Command | Signature |
-|---------|-----------|
-| `PING`  | `PING [message]` |
-| `GET`   | `GET key` |
-| `SET`   | `SET key value` |
-| `DEL`   | `DEL key [key …]` |
+| Command      | Signature                    |
+|--------------|------------------------------|
+| `PING`       | `PING [message]`             |
+| `GET`        | `GET key`                    |
+| `SET`        | `SET key value`              |
+| `DEL`        | `DEL key [key …]`            |
+| `EXISTS`     | `EXISTS key [key …]`         |
+| `EXPIRE`     | `EXPIRE key seconds`         |
+| `TTL`        | `TTL key`                    |
+| `PERSIST`    | `PERSIST key`                |
+| `PEXPIREAT`  | `PEXPIREAT key unix-ms`      |
+| `SELECT`     | `SELECT index`               |

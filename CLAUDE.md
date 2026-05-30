@@ -5,16 +5,18 @@ A Redis-compatible in-memory key-value store written in Rust, using the RESP2 pr
 ## Architecture
 
 - `main.rs` — entry point; binds the TCP listener, accepts connections, spawns handler tasks, handles shutdown
-- `handler.rs` — per-connection handler; decodes RESP2 input, dispatches commands, writes responses
+- `handler.rs` — per-connection handler; decodes RESP2 input, dispatches to `Executor`, writes responses
 - `command.rs` — CLI argument parsing (via clap) and RESP2-to-command parsing
+- `executor.rs` — bridges `Command` to `Store`; the single place where commands are applied to state
 - `config.rs` — INI config file loading via the `config` crate; exposes `ThesaurusConfig`
-- `resp2.rs` — RESP2 protocol encoder and decoder
+- `resp2.rs` — RESP2 protocol encoder and decoder (async for live connections, sync for AOF replay)
 - `store.rs` — shared in-memory `HashMap` wrapped in `Arc<RwLock>` for concurrent access
+- `aof.rs` — optional AOF persistence; appends write commands to disk and replays them on startup
 - `errors.rs` — error types for the handler and RESP2 layers
 
 ## Commands
 
-Supported: `PING`, `GET`, `SET`, `DEL`, `EXISTS`, `EXPIRE`, `TTL`, `PERSIST`
+Supported: `PING`, `GET`, `SET`, `DEL`, `EXISTS`, `EXPIRE`, `TTL`, `PERSIST`, `PEXPIREAT`, `SELECT`
 
 ## Running
 
@@ -34,7 +36,7 @@ Server behaviour (connection limits, TTL eviction rate) is configured via an INI
 ```bash
 cargo build
 cargo test
-cargo clippy
+cargo clippy -- -D warnings
 cargo fmt
 cargo fmt --check   # CI mode — reports without fixing
 cargo audit         # requires: cargo install cargo-audit

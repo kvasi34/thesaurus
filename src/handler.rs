@@ -1,8 +1,9 @@
-use log::{debug, warn};
+use log::{debug, error, warn};
 use tokio::io::{self, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use uuid::Uuid;
 
+use crate::aof::AofWriter;
 use crate::{
     command::Command,
     errors::{HandlerError, RespError},
@@ -16,15 +17,17 @@ pub(crate) struct Handler {
     uuid: Uuid,
     socket: TcpStream,
     executor: Executor,
+    aof_writer: Option<AofWriter>,
 }
 
 impl Handler {
     /// Constructor for `Handler` struct.
-    pub fn new(socket: TcpStream, executor: Executor) -> Self {
+    pub fn new(socket: TcpStream, executor: Executor, aof_writer: Option<AofWriter>) -> Self {
         Handler {
             uuid: Uuid::new_v4(),
             socket,
             executor,
+            aof_writer,
         }
     }
 
@@ -34,12 +37,13 @@ impl Handler {
     /// error occurs. Each iteration decodes one RESP2 message, parses it into
     /// a [`Command`], executes it via [`Executor`], and writes the RESP2
     /// response back to the socket.
-    pub async fn run_handler(self) -> io::Result<()> {
+    pub async fn run_handler(mut self) -> io::Result<()> {
         debug!("Handler {} started", self.uuid);
 
         let mut stream = BufReader::new(self.socket);
         loop {
-            let resp_value = match resp2::decode(&mut stream).await {
+            // Read from the socket and decode the RESP value into a `RespValue` struct
+            let resp_value = match resp2::decode_async(&mut stream).await {
                 Ok(v) => v,
                 Err(RespError::UnexpectedEof) => {
                     debug!("Handler {} client disconnected", self.uuid);
@@ -51,9 +55,27 @@ impl Handler {
                 }
             };
 
+            // Convert the `RespValue` into a `Command` struct
             let cmd = Command::from_resp2(&resp_value);
             debug!("Handler {} received command: {:?}", self.uuid, cmd);
 
+            // Capture the write flag before cmd is consumed by the match statement below
+            let is_write_cmd = cmd.as_ref().is_ok_and(|c| c.is_write());
+
+            // Capture EXPIRE key and seconds; AOF persists EXPIRE commands as PEXPIREAT. The key and the seconds are needed
+            // for this conversion later on.
+            let expire_info = is_write_cmd.then(|| {
+                cmd.as_ref().ok().and_then(|c| {
+                    if let Command::Expire { key, seconds } = c {
+                        Some((key.clone(), *seconds))
+                    } else {
+                        None
+                    }
+                })
+            });
+
+            // Execute the command using the `Executor` and generate the appropriate response
+            // The `Executor` instance is responsible for both executing the command at the `Store` and generating a `RespValue` response
             let response = match cmd {
                 Ok(cmd) => self.executor.execute(&cmd),
                 Err(HandlerError::UnknownCommand(s)) => {
@@ -65,6 +87,22 @@ impl Handler {
                     RespValue::SimpleError(e.to_string())
                 }
             };
+
+            // Call the AOF writer if the `appendonly` configuration is set to `on`
+            if is_write_cmd
+                && !matches!(response, RespValue::SimpleError(_))
+                && let Some(writer) = self.aof_writer.as_mut()
+            {
+                // Re-encode the command before writing to the AOF
+                let cmd_bytes = match expire_info.unwrap() {
+                    Some((key, seconds)) => resp2::convert_expire_to_pexpireat(key, seconds),
+                    None => resp2::encode(&resp_value),
+                };
+
+                if let Err(e) = writer.append(&cmd_bytes) {
+                    error!("Handler {} failed to write to AOF: {}", self.uuid, e);
+                }
+            }
 
             send_response(&self.uuid, &mut stream, response).await?;
         }
@@ -92,7 +130,12 @@ mod tests {
     };
 
     use super::*;
-    use crate::{executor::Executor, resp2, store::Store};
+    use crate::{
+        aof::{AofWriter, AppendFSyncMode},
+        executor::Executor,
+        resp2,
+        store::Store,
+    };
 
     async fn start_handler() -> std::net::SocketAddr {
         start_handler_with_store(Store::new()).await
@@ -103,7 +146,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             let (socket, _) = listener.accept().await.unwrap();
-            Handler::new(socket, Executor::new(store))
+            Handler::new(socket, Executor::new(store), None)
                 .run_handler()
                 .await
                 .unwrap();
@@ -118,7 +161,7 @@ mod tests {
 
         client.write_all(b"*1\r\n$4\r\nPING\r\n").await.unwrap();
 
-        let response = resp2::decode(&mut client).await.unwrap();
+        let response = resp2::decode_async(&mut client).await.unwrap();
         assert_eq!(response, RespValue::SimpleString("PONG".to_string()));
     }
 
@@ -132,7 +175,7 @@ mod tests {
             .await
             .unwrap();
 
-        let response = resp2::decode(&mut client).await.unwrap();
+        let response = resp2::decode_async(&mut client).await.unwrap();
         assert_eq!(response, RespValue::BulkString(Some("hello".to_string())));
     }
 
@@ -146,7 +189,7 @@ mod tests {
             .await
             .unwrap();
 
-        let response = resp2::decode(&mut client).await.unwrap();
+        let response = resp2::decode_async(&mut client).await.unwrap();
         assert_eq!(response, RespValue::SimpleString("OK".to_string()));
     }
 
@@ -159,14 +202,14 @@ mod tests {
             .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
             .await
             .unwrap();
-        resp2::decode(&mut client).await.unwrap();
+        resp2::decode_async(&mut client).await.unwrap();
 
         client
             .write_all(b"*2\r\n$3\r\nGET\r\n$3\r\nfoo\r\n")
             .await
             .unwrap();
 
-        let response = resp2::decode(&mut client).await.unwrap();
+        let response = resp2::decode_async(&mut client).await.unwrap();
         assert_eq!(response, RespValue::BulkString(Some("bar".to_string())));
     }
 
@@ -180,7 +223,7 @@ mod tests {
             .await
             .unwrap();
 
-        let response = resp2::decode(&mut client).await.unwrap();
+        let response = resp2::decode_async(&mut client).await.unwrap();
         assert_eq!(response, RespValue::BulkString(None));
     }
 
@@ -193,14 +236,14 @@ mod tests {
             .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
             .await
             .unwrap();
-        resp2::decode(&mut client).await.unwrap();
+        resp2::decode_async(&mut client).await.unwrap();
 
         client
             .write_all(b"*2\r\n$3\r\nDEL\r\n$3\r\nfoo\r\n")
             .await
             .unwrap();
 
-        let response = resp2::decode(&mut client).await.unwrap();
+        let response = resp2::decode_async(&mut client).await.unwrap();
         assert_eq!(response, RespValue::Integer(1));
     }
 
@@ -214,7 +257,7 @@ mod tests {
             .await
             .unwrap();
 
-        let response = resp2::decode(&mut client).await.unwrap();
+        let response = resp2::decode_async(&mut client).await.unwrap();
         assert_eq!(response, RespValue::Integer(0));
     }
 
@@ -227,12 +270,12 @@ mod tests {
             .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
             .await
             .unwrap();
-        resp2::decode(&mut client).await.unwrap();
+        resp2::decode_async(&mut client).await.unwrap();
         client
             .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nbaz\r\n$3\r\nqux\r\n")
             .await
             .unwrap();
-        resp2::decode(&mut client).await.unwrap();
+        resp2::decode_async(&mut client).await.unwrap();
 
         // DEL two existing keys and one missing key — expect count 2
         client
@@ -240,7 +283,7 @@ mod tests {
             .await
             .unwrap();
 
-        let response = resp2::decode(&mut client).await.unwrap();
+        let response = resp2::decode_async(&mut client).await.unwrap();
         assert_eq!(response, RespValue::Integer(2));
     }
 
@@ -257,7 +300,7 @@ mod tests {
             .await
             .unwrap();
 
-        let response = resp2::decode(&mut client).await.unwrap();
+        let response = resp2::decode_async(&mut client).await.unwrap();
         assert_eq!(response, RespValue::Integer(1));
     }
 
@@ -271,7 +314,7 @@ mod tests {
             .await
             .unwrap();
 
-        let response = resp2::decode(&mut client).await.unwrap();
+        let response = resp2::decode_async(&mut client).await.unwrap();
         assert_eq!(response, RespValue::Integer(0));
     }
 
@@ -290,7 +333,7 @@ mod tests {
             .await
             .unwrap();
 
-        let response = resp2::decode(&mut client).await.unwrap();
+        let response = resp2::decode_async(&mut client).await.unwrap();
         assert_eq!(response, RespValue::Integer(2));
     }
 
@@ -304,7 +347,7 @@ mod tests {
             .await
             .unwrap();
 
-        let response = resp2::decode(&mut client).await.unwrap();
+        let response = resp2::decode_async(&mut client).await.unwrap();
         assert_eq!(response, RespValue::Integer(-2));
     }
 
@@ -317,14 +360,14 @@ mod tests {
             .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
             .await
             .unwrap();
-        resp2::decode(&mut client).await.unwrap();
+        resp2::decode_async(&mut client).await.unwrap();
 
         client
             .write_all(b"*2\r\n$3\r\nTTL\r\n$3\r\nfoo\r\n")
             .await
             .unwrap();
 
-        let response = resp2::decode(&mut client).await.unwrap();
+        let response = resp2::decode_async(&mut client).await.unwrap();
         assert_eq!(response, RespValue::Integer(-1));
     }
 
@@ -338,7 +381,7 @@ mod tests {
             .await
             .unwrap();
 
-        let response = resp2::decode(&mut client).await.unwrap();
+        let response = resp2::decode_async(&mut client).await.unwrap();
         assert_eq!(response, RespValue::Integer(0));
     }
 
@@ -351,14 +394,14 @@ mod tests {
             .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
             .await
             .unwrap();
-        resp2::decode(&mut client).await.unwrap();
+        resp2::decode_async(&mut client).await.unwrap();
 
         client
             .write_all(b"*2\r\n$7\r\nPERSIST\r\n$3\r\nfoo\r\n")
             .await
             .unwrap();
 
-        let response = resp2::decode(&mut client).await.unwrap();
+        let response = resp2::decode_async(&mut client).await.unwrap();
         assert_eq!(response, RespValue::Integer(0));
     }
 
@@ -371,14 +414,14 @@ mod tests {
             .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
             .await
             .unwrap();
-        resp2::decode(&mut client).await.unwrap();
+        resp2::decode_async(&mut client).await.unwrap();
 
         client
             .write_all(b"*3\r\n$6\r\nEXPIRE\r\n$3\r\nfoo\r\n$2\r\n60\r\n")
             .await
             .unwrap();
 
-        let response = resp2::decode(&mut client).await.unwrap();
+        let response = resp2::decode_async(&mut client).await.unwrap();
         assert_eq!(response, RespValue::Integer(1));
     }
 
@@ -392,7 +435,7 @@ mod tests {
             .await
             .unwrap();
 
-        let response = resp2::decode(&mut client).await.unwrap();
+        let response = resp2::decode_async(&mut client).await.unwrap();
         assert_eq!(response, RespValue::Integer(0));
     }
 
@@ -405,20 +448,20 @@ mod tests {
             .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
             .await
             .unwrap();
-        resp2::decode(&mut client).await.unwrap();
+        resp2::decode_async(&mut client).await.unwrap();
 
         client
             .write_all(b"*3\r\n$6\r\nEXPIRE\r\n$3\r\nfoo\r\n$2\r\n60\r\n")
             .await
             .unwrap();
-        resp2::decode(&mut client).await.unwrap();
+        resp2::decode_async(&mut client).await.unwrap();
 
         client
             .write_all(b"*2\r\n$3\r\nTTL\r\n$3\r\nfoo\r\n")
             .await
             .unwrap();
 
-        let response = resp2::decode(&mut client).await.unwrap();
+        let response = resp2::decode_async(&mut client).await.unwrap();
         match response {
             RespValue::Integer(secs) => assert!(secs > 0 && secs <= 60),
             _ => panic!("expected integer response"),
@@ -440,7 +483,7 @@ mod tests {
             .await
             .unwrap();
 
-        let response = resp2::decode(&mut client).await.unwrap();
+        let response = resp2::decode_async(&mut client).await.unwrap();
         assert_eq!(response, RespValue::Integer(-2));
     }
 
@@ -453,20 +496,221 @@ mod tests {
             .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
             .await
             .unwrap();
-        resp2::decode(&mut client).await.unwrap();
+        resp2::decode_async(&mut client).await.unwrap();
 
         client
             .write_all(b"*3\r\n$6\r\nEXPIRE\r\n$3\r\nfoo\r\n$2\r\n60\r\n")
             .await
             .unwrap();
-        resp2::decode(&mut client).await.unwrap();
+        resp2::decode_async(&mut client).await.unwrap();
 
         client
             .write_all(b"*2\r\n$7\r\nPERSIST\r\n$3\r\nfoo\r\n")
             .await
             .unwrap();
 
-        let response = resp2::decode(&mut client).await.unwrap();
+        let response = resp2::decode_async(&mut client).await.unwrap();
         assert_eq!(response, RespValue::Integer(1));
+    }
+
+    // Builds a PEXPIREAT command for `key` with a deadline `offset_ms` milliseconds from now.
+    fn pexpireat_cmd(key: &str, offset_ms: i64) -> Vec<u8> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let deadline = (now_ms + offset_ms).to_string();
+        resp2::encode(&RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("PEXPIREAT".to_string())),
+            RespValue::BulkString(Some(key.to_string())),
+            RespValue::BulkString(Some(deadline)),
+        ])))
+    }
+
+    #[tokio::test]
+    async fn test_pexpireat_existing_key() {
+        let addr = start_handler().await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        client
+            .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+            .await
+            .unwrap();
+        resp2::decode_async(&mut client).await.unwrap();
+
+        client
+            .write_all(&pexpireat_cmd("foo", 60_000))
+            .await
+            .unwrap();
+
+        let response = resp2::decode_async(&mut client).await.unwrap();
+        assert_eq!(response, RespValue::Integer(1));
+    }
+
+    #[tokio::test]
+    async fn test_pexpireat_missing_key() {
+        let addr = start_handler().await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        client
+            .write_all(&pexpireat_cmd("missing", 60_000))
+            .await
+            .unwrap();
+
+        let response = resp2::decode_async(&mut client).await.unwrap();
+        assert_eq!(response, RespValue::Integer(0));
+    }
+
+    #[tokio::test]
+    async fn test_pexpireat_deadline_in_past() {
+        let addr = start_handler().await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        // Use a hardcoded timestamp from the past (1 second after the Unix epoch)
+        client
+            .write_all(b"*3\r\n$9\r\nPEXPIREAT\r\n$3\r\nfoo\r\n$4\r\n1000\r\n")
+            .await
+            .unwrap();
+
+        let response = resp2::decode_async(&mut client).await.unwrap();
+        assert_eq!(response, RespValue::Integer(0));
+    }
+
+    #[tokio::test]
+    async fn test_ttl_after_pexpireat() {
+        let addr = start_handler().await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        client
+            .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+            .await
+            .unwrap();
+        resp2::decode_async(&mut client).await.unwrap();
+
+        // Set TTL to 60 seconds from now via PEXPIREAT
+        client
+            .write_all(&pexpireat_cmd("foo", 60_000))
+            .await
+            .unwrap();
+        resp2::decode_async(&mut client).await.unwrap();
+
+        client
+            .write_all(b"*2\r\n$3\r\nTTL\r\n$3\r\nfoo\r\n")
+            .await
+            .unwrap();
+
+        let response = resp2::decode_async(&mut client).await.unwrap();
+        match response {
+            RespValue::Integer(secs) => assert!(secs > 0 && secs <= 60),
+            _ => panic!("expected integer response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_select_ok() {
+        let addr = start_handler().await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        client
+            .write_all(b"*2\r\n$6\r\nSELECT\r\n$1\r\n0\r\n")
+            .await
+            .unwrap();
+
+        let response = resp2::decode_async(&mut client).await.unwrap();
+        assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_select_out_of_index() {
+        let addr = start_handler().await;
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        client
+            .write_all(b"*2\r\n$6\r\nSELECT\r\n$1\r\n1\r\n")
+            .await
+            .unwrap();
+
+        let response = resp2::decode_async(&mut client).await.unwrap();
+        assert_eq!(
+            response,
+            RespValue::SimpleError("ERR DB index is out of range".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_expire_written_as_pexpireat_to_aof() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let dir = tempfile::tempdir().unwrap();
+        let aof_path = dir.path().join("appendonly.aof");
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let aof_writer = AofWriter::new(&aof_path, AppendFSyncMode::No).unwrap();
+
+        let handle = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            Handler::new(socket, Executor::new(Store::new()), Some(aof_writer))
+                .run_handler()
+                .await
+                .unwrap();
+        });
+
+        let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+        client
+            .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+            .await
+            .unwrap();
+        resp2::decode_async(&mut client).await.unwrap();
+
+        client
+            .write_all(b"*3\r\n$6\r\nEXPIRE\r\n$3\r\nfoo\r\n$4\r\n3600\r\n")
+            .await
+            .unwrap();
+        resp2::decode_async(&mut client).await.unwrap();
+
+        // Close the connection so the handler reaches EOF and exits cleanly
+        drop(client);
+        handle.await.unwrap();
+
+        let aof_contents = std::fs::read_to_string(&aof_path).unwrap();
+
+        // The AOF must store PEXPIREAT with an absolute deadline, not the raw EXPIRE
+        assert!(
+            aof_contents.contains("PEXPIREAT"),
+            "AOF should contain PEXPIREAT"
+        );
+        assert!(
+            !aof_contents.contains("EXPIRE\r\n"),
+            "AOF should not contain raw EXPIRE"
+        );
+
+        // The deadline should be approximately now + 3600s (in ms)
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let expected_deadline_ms = now_ms + 3600 * 1000;
+        // Extract the deadline from the AOF by finding the PEXPIREAT command's third bulk string
+        let aof_bytes = std::fs::read(&aof_path).unwrap();
+        let mut reader = std::io::BufReader::new(aof_bytes.as_slice());
+        resp2::decode(&mut reader).unwrap(); // consume the SET command
+        let pexpireat = resp2::decode(&mut reader).unwrap();
+        if let RespValue::Array(Some(args)) = pexpireat {
+            if let RespValue::BulkString(Some(deadline_str)) = &args[2] {
+                let deadline_ms: u64 = deadline_str.parse().unwrap();
+                let delta = deadline_ms.abs_diff(expected_deadline_ms);
+                assert!(
+                    delta < 5_000,
+                    "PEXPIREAT deadline should be within 5s of expected: got {deadline_ms}, expected ~{expected_deadline_ms}"
+                );
+            } else {
+                panic!("expected bulk string deadline");
+            }
+        } else {
+            panic!("expected PEXPIREAT array");
+        }
     }
 }
