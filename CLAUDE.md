@@ -9,8 +9,9 @@ A Redis-compatible in-memory key-value store written in Rust, using the RESP2 pr
 - `command.rs` — CLI argument parsing (via clap) and RESP2-to-command parsing
 - `executor.rs` — bridges `Command` to `Store`; the single place where commands are applied to state
 - `config.rs` — INI config file loading via the `config` crate; exposes `ThesaurusConfig`
-- `resp2.rs` — RESP2 protocol encoder and decoder
+- `resp2.rs` — RESP2 protocol encoder and decoder (async for live connections, sync for AOF replay)
 - `store.rs` — shared in-memory `HashMap` wrapped in `Arc<RwLock>` for concurrent access
+- `aof.rs` — optional AOF persistence; appends write commands to disk and replays them on startup
 - `errors.rs` — error types for the handler and RESP2 layers
 
 ## Commands
