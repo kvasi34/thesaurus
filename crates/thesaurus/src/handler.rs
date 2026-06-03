@@ -88,9 +88,10 @@ impl Handler {
                 }
             };
 
-            // Call the AOF writer if the `appendonly` configuration is set to `on`
+            // Call the AOF writer if the `appendonly` configuration is set to `on` and the command executed succesfully; no error
             if is_write_cmd
                 && !matches!(response, RespValue::SimpleError(_))
+                && !matches!(response, RespValue::Integer(0)) // DEL, EXPIRE and PERSIST return Integer(0) instead of SimpleError
                 && let Some(writer) = self.aof_writer.as_mut()
             {
                 // Re-encode the command before writing to the AOF

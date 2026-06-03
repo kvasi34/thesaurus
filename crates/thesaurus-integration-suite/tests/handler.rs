@@ -608,3 +608,89 @@ async fn test_expire_written_as_pexpireat_to_aof() {
         panic!("expected PEXPIREAT array");
     }
 }
+
+/// Helper function
+/// Creates a TCP listener and a spawns a Handler task with an empty [`thesaurus::store::Store`] instance.
+/// Returns the socket address and the Handler task's [`tokio::task::JoinHandle`].
+async fn start_handler_with_aof(
+    aof_writer: AofWriter,
+) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        Handler::new(socket, Executor::new(Store::new()), Some(aof_writer))
+            .run_handler()
+            .await
+            .unwrap();
+    });
+    (addr, handle)
+}
+
+#[tokio::test]
+async fn test_noop_write_cmd_not_written_to_aof() {
+    let dir = tempfile::tempdir().unwrap();
+    let aof_path = dir.path().join("appendonly.aof");
+    let aof_writer = AofWriter::new(&aof_path, AppendFSyncMode::No).unwrap();
+    let (addr, handle) = start_handler_with_aof(aof_writer).await;
+
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // DEL on a missing key returns Integer(0) — should not be written to the AOF
+    client
+        .write_all(b"*2\r\n$3\r\nDEL\r\n$7\r\nmissing\r\n")
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+
+    // EXPIRE on a missing key also returns Integer(0) — also should not be written
+    client
+        .write_all(b"*3\r\n$6\r\nEXPIRE\r\n$7\r\nmissing\r\n$2\r\n60\r\n")
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+
+    drop(client);
+    handle.await.unwrap();
+
+    assert_eq!(
+        std::fs::read(&aof_path).unwrap(),
+        b"",
+        "AOF should be empty — no-op commands must not be persisted"
+    );
+}
+
+#[tokio::test]
+async fn test_successful_write_cmd_written_to_aof() {
+    let dir = tempfile::tempdir().unwrap();
+    let aof_path = dir.path().join("appendonly.aof");
+    let aof_writer = AofWriter::new(&aof_path, AppendFSyncMode::No).unwrap();
+    let (addr, handle) = start_handler_with_aof(aof_writer).await;
+
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // SET returns SimpleString("OK") — must be written to AOF
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // DEL on an existing key returns Integer(1) — must be written to AOF
+    client
+        .write_all(b"*2\r\n$3\r\nDEL\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(1));
+
+    drop(client);
+    handle.await.unwrap();
+
+    let aof_bytes = std::fs::read(&aof_path).unwrap();
+    let mut reader = std::io::BufReader::new(aof_bytes.as_slice());
+    assert!(resp2::decode(&mut reader).is_ok(), "AOF should contain SET");
+    assert!(resp2::decode(&mut reader).is_ok(), "AOF should contain DEL");
+}
