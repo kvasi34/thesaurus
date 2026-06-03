@@ -7,6 +7,8 @@ use std::{
 };
 
 use log::{debug, error, info, warn};
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 use crate::{command::Command, errors, executor::Executor, resp2};
 
@@ -80,25 +82,34 @@ impl AofWriter {
 
     /// Spawns a background task that fsyncs the AOF to disk once per second.
     ///
-    /// No-op if the mode is not [`AppendFSyncMode::EverySec`]. The task runs until
-    /// the tokio runtime shuts down. For a clean final fsync on shutdown, see the
-    /// linked issue for cancellation token support.
-    pub fn spawn_fsync_task(&self) {
+    /// Returns `None` if the mode is not [`AppendFSyncMode::EverySec`]. On cancellation,
+    /// performs a final `sync_data` before returning.
+    pub fn spawn_fsync_task(&self, token: CancellationToken) -> Option<JoinHandle<()>> {
         if !matches!(self.fsync_mode, AppendFSyncMode::EverySec) {
-            return;
+            return None;
         }
 
         let writer = Arc::clone(&self.writer);
-        tokio::spawn(async move {
+        Some(tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
             loop {
-                interval.tick().await;
-                let guard = writer.lock().unwrap();
-                if let Err(e) = guard.file.get_ref().sync_data() {
-                    error!("AOF everysec fsync failed: {}", e);
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let guard = writer.lock().unwrap();
+                        if let Err(e) = guard.file.get_ref().sync_data() {
+                            error!("AOF everysec fsync failed: {}", e);
+                        }
+                    }
+                    _ = token.cancelled() => {
+                        let guard = writer.lock().unwrap();
+                        if let Err(e) = guard.file.get_ref().sync_data() {
+                            error!("AOF final fsync on shutdown failed: {}", e);
+                        }
+                        return;
+                    }
                 }
             }
-        });
+        }))
     }
 }
 
@@ -122,7 +133,6 @@ pub fn open(
             format!("Failed to open AOF at '{}': {}", path.display(), e),
         )
     })?;
-    writer.spawn_fsync_task();
     Ok(Some(writer))
 }
 

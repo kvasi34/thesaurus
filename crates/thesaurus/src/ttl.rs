@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 use log::{info, trace};
+use tokio_util::sync::CancellationToken;
 
 use crate::store::Store;
 
@@ -14,7 +15,7 @@ pub struct TtlEvictionDaemon {
 impl TtlEvictionDaemon {
     /// Spawns the TTL daemon and starts the loop sampling key-value pairs for eviction.
     /// The `hz` parameter controls the loop interval in milliseconds.
-    pub async fn spawn(hz: u64, store: Store) {
+    pub async fn spawn(hz: u64, store: Store, token: CancellationToken) {
         info!(
             "Starting TTL eviction daemon task with an eviction interval of {} ms",
             hz
@@ -23,8 +24,10 @@ impl TtlEvictionDaemon {
 
         let mut interval = tokio::time::interval(Duration::from_millis(hz));
         loop {
-            interval.tick().await;
-            daemon.evict_expired();
+            tokio::select! {
+                _ = interval.tick() => daemon.evict_expired(),
+                _ = token.cancelled() => return,
+            }
         }
     }
 
