@@ -1,10 +1,9 @@
-use clap::Parser;
-
 use crate::errors::HandlerError;
 use crate::resp2::RespValue;
 
 /// Server startup configuration parsed from CLI arguments and environment variables.
-#[derive(Debug, Parser)]
+#[cfg(feature = "cli")]
+#[derive(Debug, clap::Parser)]
 #[command(name = "thesaurus")]
 pub struct Cli {
     /// Server IPv4 address
