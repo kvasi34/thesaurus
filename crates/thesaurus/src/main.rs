@@ -1,18 +1,9 @@
-mod aof;
-mod command;
-mod config;
-mod errors;
-mod executor;
-mod handler;
-mod resp2;
-mod store;
-mod ttl;
-
 use std::io;
 use std::sync::Arc;
 
 use clap::Parser;
 use log::{debug, error, info, trace, warn};
+use thesaurus::{aof, command, config, executor, handler, store, ttl};
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 

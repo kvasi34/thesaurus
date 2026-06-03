@@ -1,7 +1,8 @@
 use std::fmt;
 
+/// Errors that can occur while decoding or encoding RESP2 messages.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum RespError {
+pub enum RespError {
     /// The first byte didn't match any known RESP2 type prefix.
     UnknownPrefix(char),
     /// A length or integer field couldn't be parsed.
@@ -31,8 +32,9 @@ impl From<RespError> for std::io::Error {
     }
 }
 
+/// Errors that can occur in a [`crate::handler::Handler`] task.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum HandlerError {
+pub enum HandlerError {
     /// The received RESP2 value was not the type required to parse a command.
     UnexpectedType {
         expected: &'static str,

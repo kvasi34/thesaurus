@@ -6,7 +6,8 @@ use crate::store::Store;
 
 const N: usize = 20;
 
-pub(crate) struct TtlEvictionDaemon {
+/// Background daemon that periodically samples the expiry index and evicts expired keys.
+pub struct TtlEvictionDaemon {
     store: Store,
 }
 

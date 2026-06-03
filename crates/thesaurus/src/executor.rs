@@ -18,7 +18,7 @@ use crate::store::Store;
 ///
 /// [`Handler`]: crate::handler::Handler
 #[derive(Clone, Debug)]
-pub(crate) struct Executor {
+pub struct Executor {
     store: Store,
 }
 

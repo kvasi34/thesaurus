@@ -17,7 +17,7 @@
 git clone https://github.com/kvasi34/thesaurus.git
 cd thesaurus
 cargo build
-RUST_LOG=trace cargo run -- --port 6379
+RUST_LOG=trace cargo run -p thesaurus -- --port 6379
 ```
 
 Test it with any Redis-compatible client:

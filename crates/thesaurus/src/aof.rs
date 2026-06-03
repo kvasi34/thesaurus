@@ -14,7 +14,7 @@ use crate::{command::Command, errors, executor::Executor, resp2};
 ///
 /// Cheaply cloneable — all clones share the same underlying file handle via [`Arc`].
 #[derive(Clone, Debug)]
-pub(crate) struct AofWriter {
+pub struct AofWriter {
     writer: Arc<Mutex<Writer>>,
     fsync_mode: AppendFSyncMode,
 }
@@ -29,7 +29,7 @@ struct Writer {
 /// Higher durability means lower throughput — `Always` is the safest but slowest,
 /// `No` is the fastest but risks losing up to ~30 seconds of writes on a crash.
 #[derive(Clone, Debug)]
-pub(crate) enum AppendFSyncMode {
+pub enum AppendFSyncMode {
     /// fsync after every write command. At most zero data loss; highest I/O cost.
     Always,
     /// fsync once per second in the background. At most one second of data loss.
@@ -105,7 +105,7 @@ impl AofWriter {
 /// Opens the AOF and starts the background fsync task if needed.
 ///
 /// Returns `None` when `enabled` is `false` so callers stay unaware of AOF internals.
-pub(crate) fn open(
+pub fn open(
     enabled: bool,
     dirname: &str,
     filename: &str,
@@ -127,12 +127,12 @@ pub(crate) fn open(
 }
 
 /// Builds the full path to the AOF from the configured directory and filename.
-pub(crate) fn resolve_aof_path(dirname: &str, filename: &str) -> PathBuf {
+pub fn resolve_aof_path(dirname: &str, filename: &str) -> PathBuf {
     Path::new(dirname).join(filename)
 }
 
 /// Reads the AOF and applies all commands in chronological order. This way, the store is essentially re-built.
-pub(crate) fn sync_store_with_aof(
+pub fn sync_store_with_aof(
     enabled: bool,
     dirname: &str,
     filename: &str,

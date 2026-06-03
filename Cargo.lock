@@ -715,6 +715,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "thesaurus-integration-suite"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "thesaurus",
+ "tokio",
+]
+
+[[package]]
 name = "tiny-keccak"
 version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
