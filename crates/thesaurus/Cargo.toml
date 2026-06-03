@@ -1,0 +1,39 @@
+[package]
+name = "thesaurus"
+version = "0.1.0"
+description = "Redis-compatible, async key-value store"
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories.workspace = true
+readme.workspace = true
+
+[lib]
+name = "thesaurus"
+path = "src/lib.rs"
+
+[[bin]]
+name = "thesaurus"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+cli = ["dep:clap"]
+
+[dependencies]
+clap = { version = "4.6.1", features = ["derive", "env"], optional = true }
+config = { version = "0.15.23", default-features = false, features = ["ini"] }
+env_logger = "0.11.10"
+log = "0.4.29"
+rand = "0.10.1"
+tokio = { version = "1.52.3", features = ["net", "io-util", "sync", "rt-multi-thread", "macros", "time", "signal"] }
+tokio-util = "0.7.18"
+uuid = { version = "1.23.1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

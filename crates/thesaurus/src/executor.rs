@@ -18,7 +18,7 @@ use crate::store::Store;
 ///
 /// [`Handler`]: crate::handler::Handler
 #[derive(Clone, Debug)]
-pub(crate) struct Executor {
+pub struct Executor {
     store: Store,
 }
 
@@ -96,7 +96,13 @@ impl Executor {
                     return RespValue::Integer(0);
                 }
 
+                // Fail PExpireAt commands where the deadline is in the past
                 let now_ms = now_duration.unwrap_or_default().as_millis() as u64;
+                if *deadline_ms <= now_ms {
+                    self.store.delete(key);
+                    return RespValue::Integer(0);
+                }
+
                 let remaining_ms = deadline_ms.saturating_sub(now_ms);
                 let deadline = Instant::now() + Duration::from_millis(remaining_ms);
                 RespValue::Integer(self.store.set_ttl(key, deadline) as i64)

@@ -1,12 +1,11 @@
-use clap::Parser;
-
 use crate::errors::HandlerError;
 use crate::resp2::RespValue;
 
-// Server startup configuration.
-#[derive(Debug, Parser)]
+/// Server startup configuration parsed from CLI arguments and environment variables.
+#[cfg(feature = "cli")]
+#[derive(Debug, clap::Parser)]
 #[command(name = "thesaurus")]
-pub(crate) struct Cli {
+pub struct Cli {
     /// Server IPv4 address
     #[arg(long, default_value = "127.0.0.1", env = "THESAURUS_BIND")]
     pub bind: String,
@@ -22,7 +21,7 @@ pub(crate) struct Cli {
 
 /// Command parsed from raw TCP client input.
 #[derive(Debug, PartialEq)]
-pub(crate) enum Command {
+pub enum Command {
     /// Ping the server to check if it is alive.
     Ping { message: Option<String> },
     /// Get the value for a key.

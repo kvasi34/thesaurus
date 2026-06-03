@@ -24,14 +24,20 @@ fn default_val(key: &str) -> &'static str {
 /// Controls resource limits and background task tuning. Connection and
 /// network settings (bind address, port) are handled separately by [`command::Cli`].
 #[derive(Debug)]
-pub(crate) struct ThesaurusConfig {
+pub struct ThesaurusConfig {
+    /// Maximum number of simultaneous client connections.
     pub max_connections: usize,
+    /// TTL eviction loop interval in milliseconds.
     pub hz: u64,
 
     // AOF configuration
+    /// Whether AOF persistence is enabled.
     pub appendonly: bool,
+    /// Filename of the AOF file (e.g. `appendonly.aof`).
     pub appendfilename: String,
+    /// Directory where the AOF file is stored.
     pub appenddirname: String,
+    /// fsync strategy for the AOF.
     pub appendfsync: AppendFSyncMode,
 }
 
@@ -52,7 +58,7 @@ impl Default for ThesaurusConfig {
 ///
 /// Environment variables prefixed with `THESAURUS_` take precedence over file values.
 /// Returns an error if the path does not point to an `.ini` file or if parsing fails.
-pub(crate) fn load_config(path: &str) -> Result<ThesaurusConfig, String> {
+pub fn load_config(path: &str) -> Result<ThesaurusConfig, String> {
     if !path.ends_with(".ini") {
         error!("Failed to read INI file at `{}`", path);
         return Err(format!("Expected an .ini file, got: {}", path));

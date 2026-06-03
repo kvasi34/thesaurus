@@ -7,6 +7,8 @@ use std::{
 };
 
 use log::{debug, error, info, warn};
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 use crate::{command::Command, errors, executor::Executor, resp2};
 
@@ -14,7 +16,7 @@ use crate::{command::Command, errors, executor::Executor, resp2};
 ///
 /// Cheaply cloneable — all clones share the same underlying file handle via [`Arc`].
 #[derive(Clone, Debug)]
-pub(crate) struct AofWriter {
+pub struct AofWriter {
     writer: Arc<Mutex<Writer>>,
     fsync_mode: AppendFSyncMode,
 }
@@ -29,7 +31,7 @@ struct Writer {
 /// Higher durability means lower throughput — `Always` is the safest but slowest,
 /// `No` is the fastest but risks losing up to ~30 seconds of writes on a crash.
 #[derive(Clone, Debug)]
-pub(crate) enum AppendFSyncMode {
+pub enum AppendFSyncMode {
     /// fsync after every write command. At most zero data loss; highest I/O cost.
     Always,
     /// fsync once per second in the background. At most one second of data loss.
@@ -80,32 +82,41 @@ impl AofWriter {
 
     /// Spawns a background task that fsyncs the AOF to disk once per second.
     ///
-    /// No-op if the mode is not [`AppendFSyncMode::EverySec`]. The task runs until
-    /// the tokio runtime shuts down. For a clean final fsync on shutdown, see the
-    /// linked issue for cancellation token support.
-    pub fn spawn_fsync_task(&self) {
+    /// Returns `None` if the mode is not [`AppendFSyncMode::EverySec`]. On cancellation,
+    /// performs a final `sync_data` before returning.
+    pub fn spawn_fsync_task(&self, token: CancellationToken) -> Option<JoinHandle<()>> {
         if !matches!(self.fsync_mode, AppendFSyncMode::EverySec) {
-            return;
+            return None;
         }
 
         let writer = Arc::clone(&self.writer);
-        tokio::spawn(async move {
+        Some(tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
             loop {
-                interval.tick().await;
-                let guard = writer.lock().unwrap();
-                if let Err(e) = guard.file.get_ref().sync_data() {
-                    error!("AOF everysec fsync failed: {}", e);
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let guard = writer.lock().unwrap();
+                        if let Err(e) = guard.file.get_ref().sync_data() {
+                            error!("AOF everysec fsync failed: {}", e);
+                        }
+                    }
+                    _ = token.cancelled() => {
+                        let guard = writer.lock().unwrap();
+                        if let Err(e) = guard.file.get_ref().sync_data() {
+                            error!("AOF final fsync on shutdown failed: {}", e);
+                        }
+                        return;
+                    }
                 }
             }
-        });
+        }))
     }
 }
 
 /// Opens the AOF and starts the background fsync task if needed.
 ///
 /// Returns `None` when `enabled` is `false` so callers stay unaware of AOF internals.
-pub(crate) fn open(
+pub fn open(
     enabled: bool,
     dirname: &str,
     filename: &str,
@@ -122,17 +133,16 @@ pub(crate) fn open(
             format!("Failed to open AOF at '{}': {}", path.display(), e),
         )
     })?;
-    writer.spawn_fsync_task();
     Ok(Some(writer))
 }
 
 /// Builds the full path to the AOF from the configured directory and filename.
-pub(crate) fn resolve_aof_path(dirname: &str, filename: &str) -> PathBuf {
+pub fn resolve_aof_path(dirname: &str, filename: &str) -> PathBuf {
     Path::new(dirname).join(filename)
 }
 
 /// Reads the AOF and applies all commands in chronological order. This way, the store is essentially re-built.
-pub(crate) fn sync_store_with_aof(
+pub fn sync_store_with_aof(
     enabled: bool,
     dirname: &str,
     filename: &str,

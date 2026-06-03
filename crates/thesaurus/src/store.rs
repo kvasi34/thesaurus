@@ -6,11 +6,11 @@ use rand::seq::IteratorRandom;
 
 /// Shared in-memory key-value store.
 ///
-/// Internally wraps an `Arc<Mutex<HashMap>>` so it can be cheaply cloned
-/// and shared across handler tasks. All operations lock the mutex for the
-/// duration of the call and release it immediately on return.
+/// Internally wraps an `Arc<RwLock<HashMap>>` so it can be cheaply cloned
+/// and shared across handler tasks. All operations lock for the duration of
+/// the call and release immediately on return.
 #[derive(Clone, Debug)]
-pub(crate) struct Store {
+pub struct Store {
     inner: Arc<RwLock<StoreInner>>,
 }
 
@@ -18,6 +18,12 @@ pub(crate) struct Store {
 struct StoreInner {
     data: HashMap<String, String>,
     expiry_index: HashMap<String, Instant>,
+}
+
+impl Default for Store {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Store {

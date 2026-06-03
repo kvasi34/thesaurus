@@ -2,9 +2,19 @@
 
 A Redis-compatible in-memory key-value store written in Rust, using the RESP2 protocol over TCP.
 
+## Workspace layout
+
+The project is a Cargo workspace with two crates under `crates/`:
+
+- `crates/thesaurus/` — library crate (+ binary entry point)
+- `crates/thesaurus-integration-suite/` — integration test suite; tests that spin up real TCP handlers live here
+
 ## Architecture
 
-- `main.rs` — entry point; binds the TCP listener, accepts connections, spawns handler tasks, handles shutdown
+All source files live under `crates/thesaurus/src/`:
+
+- `lib.rs` — crate root; re-exports all public modules
+- `main.rs` — binary entry point; binds the TCP listener, accepts connections, spawns handler tasks, handles shutdown
 - `handler.rs` — per-connection handler; decodes RESP2 input, dispatches to `Executor`, writes responses
 - `command.rs` — CLI argument parsing (via clap) and RESP2-to-command parsing
 - `executor.rs` — bridges `Command` to `Store`; the single place where commands are applied to state
@@ -21,7 +31,7 @@ Supported: `PING`, `GET`, `SET`, `DEL`, `EXISTS`, `EXPIRE`, `TTL`, `PERSIST`, `P
 ## Running
 
 ```bash
-cargo run -- [OPTIONS]
+cargo run -p thesaurus -- [OPTIONS]
 
 Options:
   --bind <BIND>     [env: THESAURUS_BIND]   [default: 127.0.0.1]

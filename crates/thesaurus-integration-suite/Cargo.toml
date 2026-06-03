@@ -1,0 +1,12 @@
+[package]
+name = "thesaurus-integration-suite"
+version = "0.1.0"
+description = "Integration test suite for Thesaurus database"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dev-dependencies]
+thesaurus = { path = "../thesaurus" }
+tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros"] }
+tempfile = "3"
