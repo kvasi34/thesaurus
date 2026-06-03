@@ -3,7 +3,14 @@ name = "thesaurus-integration-suite"
 version = "0.1.0"
 description = "Integration test suite for Thesaurus database"
 edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
+categories.workspace = true
+readme.workspace = true
 publish = false
 
 [dev-dependencies]

@@ -9,24 +9,10 @@
 - **Handler tasks** — decode RESP2 input, dispatch commands, write responses
 - **Shared store** — an `Arc<RwLock<HashMap>>` shared across all handler tasks
 - **TTL worker** — background task that evicts expired keys
+- **AofWriter** — handles writes to AOF log
 - **AOF log** — optional on-disk persistence via append-only file
 
-## Getting started
-
-```bash
-git clone https://github.com/kvasi34/thesaurus.git
-cd thesaurus
-cargo build
-RUST_LOG=trace cargo run -p thesaurus -- --port 6379
-```
-
-Test it with any Redis-compatible client:
-
-```bash
-redis-cli ping
-redis-cli set foo bar
-redis-cli get foo
-```
+Check the [Developer Guide](./docs/dev/README.md) for more information.
 
 ## Running tests and linting
 
@@ -39,22 +25,11 @@ cargo audit     # requires: cargo install cargo-audit
 
 ## Making changes
 
-- Open a PR against `main` — direct pushes are not allowed
-- All CI checks must pass: `build`, `test`, `clippy`, `fmt`, `audit`
+- Open a PR against `main`
+- Run all CI checks: `build`, `test`, `clippy`, `fmt`, `audit`
 - PRs are merged via squash merge
 - Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/)
 
-## Supported commands
+## Using AI
 
-| Command      | Signature                    |
-|--------------|------------------------------|
-| `PING`       | `PING [message]`             |
-| `GET`        | `GET key`                    |
-| `SET`        | `SET key value`              |
-| `DEL`        | `DEL key [key …]`            |
-| `EXISTS`     | `EXISTS key [key …]`         |
-| `EXPIRE`     | `EXPIRE key seconds`         |
-| `TTL`        | `TTL key`                    |
-| `PERSIST`    | `PERSIST key`                |
-| `PEXPIREAT`  | `PEXPIREAT key unix-ms`      |
-| `SELECT`     | `SELECT index`               |
+The use of AI assistants to write code, issues or PRs is accepted. However, the human author is responsible for understanding the submitted code and should be able to comment on their submissions.
