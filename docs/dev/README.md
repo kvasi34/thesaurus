@@ -18,10 +18,10 @@ TcpListener::bind(addr)
    │  tokio::spawn(Handler::run) ──────┤
    │  (permit dropped on task exit)    │
    │                                   │
-   └─ Ctrl+C → semaphore.close(), break│
+   └─ SIGINT/SIGTERM → semaphore.close(), break│
 ```
 
-A `Semaphore` with capacity `max_connections` (default: 100, configured via `config.ini`) caps concurrent tasks. If the semaphore is closed (shutdown), the accept loop exits. Active handlers finish naturally; there is no forced cancellation.
+A `Semaphore` with capacity `max_connections` (default: 100, configured via `config.ini`) caps concurrent tasks. If the semaphore is closed (shutdown), the accept loop exits. Active handlers are given 10 seconds to finish; any still running after that are forcibly aborted via `handler_set.abort_all()`.
 
 ## Command Lifecycle
 
