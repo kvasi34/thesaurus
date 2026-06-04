@@ -116,6 +116,13 @@ impl Store {
             guard.data.remove(key);
         }
     }
+
+    /// Returns the number of keys in the store. It may slightly overcount because expired
+    /// but un-evicted keys are also included. This approach guarantees O(1) time complexity.
+    pub fn size(&self) -> usize {
+        let guard = self.inner.read().unwrap();
+        guard.data.len()
+    }
 }
 
 #[cfg(test)]

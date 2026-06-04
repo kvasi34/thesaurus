@@ -42,6 +42,8 @@ pub enum Command {
     PExpireAt { key: String, deadline_ms: u64 },
     /// No-op command; Thesaurus is a single-store database. Only accepts 0 as a valid index.
     Select { index: u8 },
+    /// Returns the number of keys in the database.
+    DbSize,
 }
 
 impl Command {
@@ -91,6 +93,7 @@ impl Command {
             "EXPIRE" => Command::parse_expire_command(args),
             "PEXPIREAT" => Command::parse_pexpireat_command(args),
             "SELECT" => Command::parse_select_command(args),
+            "DBSIZE" => Command::parse_dbsize_command(args),
             _ => Err(HandlerError::UnknownCommand(first_arg.clone())),
         }
     }
@@ -257,6 +260,18 @@ impl Command {
         };
 
         Ok(Command::Select { index })
+    }
+
+    /// Helper function to parse the arguments of a DBSIZE command into a `Command::DbSize` struct.
+    fn parse_dbsize_command(args: &[RespValue]) -> Result<Self, HandlerError> {
+        if args.len() != 1 {
+            return Err(HandlerError::WrongArity {
+                expected: 1,
+                got: args.len() as u8,
+            });
+        }
+
+        Ok(Command::DbSize)
     }
 }
 
@@ -444,5 +459,23 @@ mod tests {
     fn test_from_resp2_select() {
         let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SELECT", "0"]));
         assert_eq!(cmd.unwrap(), Command::Select { index: 0 });
+    }
+
+    #[test]
+    fn test_from_resp2_dbsize() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["DBSIZE"]));
+        assert_eq!(cmd.unwrap(), Command::DbSize);
+    }
+
+    #[test]
+    fn test_from_resp2_dbsize_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["DBSIZE", "foo"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 1,
+                got: 2
+            }
+        );
     }
 }

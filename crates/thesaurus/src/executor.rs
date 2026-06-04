@@ -115,6 +115,8 @@ impl Executor {
 
                 RespValue::SimpleString("OK".to_string())
             }
+
+            Command::DbSize => RespValue::Integer(self.store.size() as i64),
         }
     }
 }
