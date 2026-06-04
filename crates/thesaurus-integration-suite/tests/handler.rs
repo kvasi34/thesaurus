@@ -534,6 +534,38 @@ async fn test_select_out_of_index() {
 }
 
 #[tokio::test]
+async fn test_dbsize() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client.write_all(b"*1\r\n$6\r\nDBSIZE\r\n").await.unwrap();
+    let mut response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$4\r\nkey1\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$4\r\nkey2\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$4\r\nkey3\r\n$3\r\nbaz\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client.write_all(b"*1\r\n$6\r\nDBSIZE\r\n").await.unwrap();
+    response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(3));
+}
+
+#[tokio::test]
 async fn test_expire_written_as_pexpireat_to_aof() {
     use std::time::{SystemTime, UNIX_EPOCH};
 

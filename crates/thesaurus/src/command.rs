@@ -42,6 +42,8 @@ pub enum Command {
     PExpireAt { key: String, deadline_ms: u64 },
     /// No-op command; Thesaurus is a single-store database. Only accepts 0 as a valid index.
     Select { index: u8 },
+    /// Returns the number of keys in the database.
+    DbSize,
 }
 
 impl Command {
@@ -91,6 +93,7 @@ impl Command {
             "EXPIRE" => Command::parse_expire_command(args),
             "PEXPIREAT" => Command::parse_pexpireat_command(args),
             "SELECT" => Command::parse_select_command(args),
+            "DBSIZE" => Command::parse_dbsize_command(args),
             _ => Err(HandlerError::UnknownCommand(first_arg.clone())),
         }
     }
@@ -128,12 +131,7 @@ impl Command {
         args: &[RespValue],
         make_cmd: fn(String) -> Command,
     ) -> Result<Self, HandlerError> {
-        if args.len() != 2 {
-            return Err(HandlerError::WrongArity {
-                expected: 2,
-                got: args.len() as u8,
-            });
-        }
+        check_arity(args, 2)?;
 
         let key = match &args[1] {
             RespValue::BulkString(Some(s)) => s.clone(),
@@ -145,12 +143,7 @@ impl Command {
 
     /// Helper function to parse the arguments of a SET command into a `Command::Set` struct.
     fn parse_set_command(args: &[RespValue]) -> Result<Self, HandlerError> {
-        if args.len() != 3 {
-            return Err(HandlerError::WrongArity {
-                expected: 3,
-                got: args.len() as u8,
-            });
-        }
+        check_arity(args, 3)?;
 
         let key = match &args[1] {
             RespValue::BulkString(Some(s)) => s.clone(),
@@ -190,12 +183,7 @@ impl Command {
 
     /// Helper function to parse the arguments of an EXPIRE command into a `Command::Expire` struct.
     fn parse_expire_command(args: &[RespValue]) -> Result<Self, HandlerError> {
-        if args.len() != 3 {
-            return Err(HandlerError::WrongArity {
-                expected: 3,
-                got: args.len() as u8,
-            });
-        }
+        check_arity(args, 3)?;
 
         let key = match &args[1] {
             RespValue::BulkString(Some(s)) => s.clone(),
@@ -213,12 +201,7 @@ impl Command {
 
     /// Helper function to parse the arguments of a PEXPIREAT command into a `Command::PExpireAt` struct.
     fn parse_pexpireat_command(args: &[RespValue]) -> Result<Self, HandlerError> {
-        if args.len() != 3 {
-            return Err(HandlerError::WrongArity {
-                expected: 3,
-                got: args.len() as u8,
-            });
-        }
+        check_arity(args, 3)?;
 
         let key = match &args[1] {
             RespValue::BulkString(Some(s)) => s.clone(),
@@ -236,12 +219,7 @@ impl Command {
 
     /// Helper function to parse the arguments of a SELECT command into a `Command::Select` struct.
     fn parse_select_command(args: &[RespValue]) -> Result<Self, HandlerError> {
-        if args.len() != 2 {
-            return Err(HandlerError::WrongArity {
-                expected: 2,
-                got: args.len() as u8,
-            });
-        }
+        check_arity(args, 2)?;
 
         let index = match &args[1] {
             RespValue::BulkString(Some(s)) => s.parse::<u8>().map_err(|_| {
@@ -258,6 +236,24 @@ impl Command {
 
         Ok(Command::Select { index })
     }
+
+    /// Helper function to parse the arguments of a DBSIZE command into a `Command::DbSize` struct.
+    fn parse_dbsize_command(args: &[RespValue]) -> Result<Self, HandlerError> {
+        check_arity(args, 1)?;
+
+        Ok(Command::DbSize)
+    }
+}
+
+/// Helper function to ensure that the correct number of arguments where given.
+fn check_arity(args: &[RespValue], expected: usize) -> Result<(), HandlerError> {
+    if args.len() != expected {
+        return Err(HandlerError::WrongArity {
+            expected: expected as u8,
+            got: args.len() as u8,
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -444,5 +440,23 @@ mod tests {
     fn test_from_resp2_select() {
         let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SELECT", "0"]));
         assert_eq!(cmd.unwrap(), Command::Select { index: 0 });
+    }
+
+    #[test]
+    fn test_from_resp2_dbsize() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["DBSIZE"]));
+        assert_eq!(cmd.unwrap(), Command::DbSize);
+    }
+
+    #[test]
+    fn test_from_resp2_dbsize_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["DBSIZE", "foo"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 1,
+                got: 2
+            }
+        );
     }
 }
