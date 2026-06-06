@@ -6,6 +6,7 @@
 | `GET`       | `GET key`               | —                 |
 | `SET`       | `SET key value`         |                   |
 | `DEL`       | `DEL key [key …]`       | —                 |
+| `GETDEL`    | `GETDEL key`            | —                 |
 | `EXISTS`    | `EXISTS key [key …]`    | —                 |
 | `EXPIRE`    | `EXPIRE key seconds`    |                   |
 | `TTL`       | `TTL key`               | —                 |

@@ -30,6 +30,8 @@ pub enum Command {
     Set { key: String, value: String },
     /// Delete a key-value pair.
     Delete { keys: Vec<String> },
+    /// Get the value for a key and delete key-value pair.
+    GetDel { key: String },
     /// Returns if key(s) exists.
     Exists { keys: Vec<String> },
     /// Get the remaining time to live of a key that has a timeout.
@@ -87,6 +89,7 @@ impl Command {
             "GET" => Command::parse_key_command(args, |key| Command::Get { key }),
             "SET" => Command::parse_set_command(args),
             "DEL" => Command::parse_keys_command(args, |keys| Command::Delete { keys }),
+            "GETDEL" => Command::parse_key_command(args, |key| Command::GetDel { key }),
             "EXISTS" => Command::parse_keys_command(args, |keys| Command::Exists { keys }),
             "TTL" => Command::parse_key_command(args, |key| Command::Ttl { key }),
             "PERSIST" => Command::parse_key_command(args, |key| Command::Persist { key }),
@@ -104,6 +107,7 @@ impl Command {
             self,
             Command::Set { .. }
                 | Command::Delete { .. }
+                | Command::GetDel { .. }
                 | Command::Expire { .. }
                 | Command::PExpireAt { .. }
                 | Command::Persist { .. }
