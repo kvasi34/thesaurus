@@ -162,6 +162,85 @@ async fn test_del_multiple_keys() {
 }
 
 #[tokio::test]
+async fn test_getdel_existing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*2\r\n$6\r\nGETDEL\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(Some("bar".to_string())));
+}
+
+#[tokio::test]
+async fn test_getdel_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*2\r\n$6\r\nGETDEL\r\n$7\r\nmissing\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
+async fn test_getdel_removes_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*2\r\n$6\r\nGETDEL\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*2\r\n$3\r\nGET\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
+async fn test_getdel_expired_key() {
+    use std::time::{Duration, Instant};
+    let store = Store::new();
+    store.set("foo", "bar".to_string());
+    store.set_ttl("foo", Instant::now() - Duration::from_secs(1));
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*2\r\n$6\r\nGETDEL\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
 async fn test_exists_existing_key() {
     let store = Store::new();
     store.set("key1", "Hello".to_string());

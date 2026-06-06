@@ -62,6 +62,18 @@ impl Store {
         guard.data.remove(key).is_some()
     }
 
+    /// Get the value for `key` and immediately delete the `key`.
+    pub fn get_del(&self, key: &str) -> Option<String> {
+        let mut guard = self.inner.write().unwrap();
+        let expiry_entry = guard.expiry_index.get(key);
+        if expiry_entry.is_none_or(|v| Instant::now() < *v) {
+            guard.expiry_index.remove(key);
+            return guard.data.remove(key);
+        }
+
+        None
+    }
+
     /// Checks if a `key` exists in the store.
     pub fn exists(&self, key: &str) -> bool {
         let guard = self.inner.read().unwrap();
@@ -199,6 +211,47 @@ mod tests {
     fn test_delete_missing_key() {
         let store = Store::new();
         assert!(!store.delete("missing"));
+    }
+
+    // get_del
+    #[test]
+    fn test_get_del_existing_key() {
+        let store = Store::new();
+        store.set("foo", "bar".to_string());
+        assert_eq!(store.get_del("foo"), Some("bar".to_string()));
+    }
+
+    #[test]
+    fn test_get_del_missing_key() {
+        let store = Store::new();
+        assert_eq!(store.get_del("missing"), None);
+    }
+
+    #[test]
+    fn test_get_del_removes_key() {
+        let store = Store::new();
+        store.set("foo", "bar".to_string());
+        store.get_del("foo");
+        assert_eq!(store.get("foo"), None);
+    }
+
+    #[test]
+    fn test_get_del_removes_expiry() {
+        use std::time::Duration;
+        let store = Store::new();
+        store.set("foo", "bar".to_string());
+        store.set_ttl("foo", Instant::now() + Duration::from_secs(60));
+        store.get_del("foo");
+        assert_eq!(store.get_ttl("foo"), None);
+    }
+
+    #[test]
+    fn test_get_del_expired_key() {
+        use std::time::Duration;
+        let store = Store::new();
+        store.set("foo", "bar".to_string());
+        store.set_ttl("foo", Instant::now() - Duration::from_secs(1));
+        assert_eq!(store.get_del("foo"), None);
     }
 
     // exists

@@ -54,6 +54,12 @@ impl Executor {
                 RespValue::Integer(count)
             }
 
+            Command::GetDel { key } => {
+                let value = self.store.get_del(key);
+                trace!("GETDEL {}: {:?}", key, value);
+                RespValue::BulkString(value)
+            }
+
             Command::Exists { keys } => {
                 let count: i64 = keys.iter().map(|k| self.store.exists(k) as i64).sum();
                 RespValue::Integer(count)
