@@ -466,6 +466,21 @@ async fn test_persist_key_with_ttl() {
     assert_eq!(response, RespValue::Integer(1));
 }
 
+/// Builds an EXPIREAT command for `key` with a deadline `offset_secs` seconds from now.
+fn expireat_cmd(key: &str, offset_secs: i64) -> Vec<u8> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let deadline = (now_secs + offset_secs).to_string();
+    resp2::encode(&RespValue::Array(Some(vec![
+        RespValue::BulkString(Some("EXPIREAT".to_string())),
+        RespValue::BulkString(Some(key.to_string())),
+        RespValue::BulkString(Some(deadline)),
+    ])))
+}
+
 /// Builds a PEXPIREAT command for `key` with a deadline `offset_ms` milliseconds from now.
 fn pexpireat_cmd(key: &str, offset_ms: i64) -> Vec<u8> {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -577,6 +592,320 @@ async fn test_ttl_after_pexpireat() {
     let response = resp2::decode_async(&mut client).await.unwrap();
     match response {
         RespValue::Integer(secs) => assert!(secs > 0 && secs <= 60),
+        _ => panic!("expected integer response"),
+    }
+}
+
+#[tokio::test]
+async fn test_pexpire_existing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*3\r\n$7\r\nPEXPIRE\r\n$3\r\nfoo\r\n$5\r\n60000\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(1));
+}
+
+#[tokio::test]
+async fn test_pexpire_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$7\r\nPEXPIRE\r\n$7\r\nmissing\r\n$5\r\n60000\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+}
+
+#[tokio::test]
+async fn test_ttl_after_pexpire() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*3\r\n$7\r\nPEXPIRE\r\n$3\r\nfoo\r\n$5\r\n60000\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*2\r\n$3\r\nTTL\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    match response {
+        RespValue::Integer(secs) => assert!(secs > 0 && secs <= 60),
+        _ => panic!("expected integer response"),
+    }
+}
+
+#[tokio::test]
+async fn test_expireat_existing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client.write_all(&expireat_cmd("foo", 60)).await.unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(1));
+}
+
+#[tokio::test]
+async fn test_expireat_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&expireat_cmd("missing", 60))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+}
+
+#[tokio::test]
+async fn test_expireat_deadline_in_past() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // Use a hardcoded timestamp from the past (1 second after the Unix epoch)
+    client
+        .write_all(b"*3\r\n$8\r\nEXPIREAT\r\n$3\r\nfoo\r\n$1\r\n1\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+}
+
+#[tokio::test]
+async fn test_expireat_deadline_in_past_existing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // Deadline 60 seconds in the past — should return 0, not 1
+    client.write_all(&expireat_cmd("foo", -60)).await.unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+}
+
+#[tokio::test]
+async fn test_ttl_after_expireat() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client.write_all(&expireat_cmd("foo", 60)).await.unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*2\r\n$3\r\nTTL\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    match response {
+        RespValue::Integer(secs) => assert!(secs > 0 && secs <= 60),
+        _ => panic!("expected integer response"),
+    }
+}
+
+#[tokio::test]
+async fn test_expiretime_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&resp2::encode(&RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("EXPIRETIME".to_string())),
+            RespValue::BulkString(Some("missing".to_string())),
+        ]))))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(-2));
+}
+
+#[tokio::test]
+async fn test_expiretime_key_without_expiry() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&resp2::encode(&RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("EXPIRETIME".to_string())),
+            RespValue::BulkString(Some("foo".to_string())),
+        ]))))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(-1));
+}
+
+#[tokio::test]
+async fn test_expiretime_key_with_expiry() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*3\r\n$6\r\nEXPIRE\r\n$3\r\nfoo\r\n$4\r\n3600\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&resp2::encode(&RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("EXPIRETIME".to_string())),
+            RespValue::BulkString(Some("foo".to_string())),
+        ]))))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let expected = now_secs + 3600;
+    match response {
+        RespValue::Integer(ts) => {
+            assert!((ts - expected).abs() < 5, "expected ~{expected}, got {ts}")
+        }
+        _ => panic!("expected integer response"),
+    }
+}
+
+#[tokio::test]
+async fn test_pexpiretime_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&resp2::encode(&RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("PEXPIRETIME".to_string())),
+            RespValue::BulkString(Some("missing".to_string())),
+        ]))))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(-2));
+}
+
+#[tokio::test]
+async fn test_pexpiretime_key_without_expiry() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&resp2::encode(&RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("PEXPIRETIME".to_string())),
+            RespValue::BulkString(Some("foo".to_string())),
+        ]))))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(-1));
+}
+
+#[tokio::test]
+async fn test_pexpiretime_key_with_expiry() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*3\r\n$6\r\nEXPIRE\r\n$3\r\nfoo\r\n$4\r\n3600\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&resp2::encode(&RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("PEXPIRETIME".to_string())),
+            RespValue::BulkString(Some("foo".to_string())),
+        ]))))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let expected = now_ms + 3600 * 1000;
+    match response {
+        RespValue::Integer(ts) => assert!(
+            (ts - expected).abs() < 5000,
+            "expected ~{expected}, got {ts}"
+        ),
         _ => panic!("expected integer response"),
     }
 }

@@ -36,11 +36,19 @@ pub enum Command {
     Exists { keys: Vec<String> },
     /// Get the remaining time to live of a key that has a timeout.
     Ttl { key: String },
+    /// Returns the absolute Unix timestamp (since January 1, 1970) in seconds at which the given key will expire.
+    ExpireTime { key: String },
+    /// Returns the absolute Unix timestamp (since January 1, 1970) in milliseconds at which the given key will expire.
+    PExpireTime { key: String },
     /// Remove the expiry from a key, making it permanent.
     Persist { key: String },
     /// Set a timeout for a key by specifying the number of seconds representing the TTL (time to live).
     Expire { key: String, seconds: u64 },
-    /// Set a timeout for a key at an absolute Unix timestamp in milliseconds
+    /// Set a timeout for a key by specifying the number of milliseconds representing the TTL (time to live).
+    PExpire { key: String, milliseconds: u64 },
+    /// Set a timeout for a key at an absolute Unix timestamp in seconds.
+    ExpireAt { key: String, deadline_secs: u64 },
+    /// Set a timeout for a key at an absolute Unix timestamp in milliseconds.
     PExpireAt { key: String, deadline_ms: u64 },
     /// No-op command; Thesaurus is a single-store database. Only accepts 0 as a valid index.
     Select { index: u8 },
@@ -92,9 +100,22 @@ impl Command {
             "GETDEL" => Command::parse_key_command(args, |key| Command::GetDel { key }),
             "EXISTS" => Command::parse_keys_command(args, |keys| Command::Exists { keys }),
             "TTL" => Command::parse_key_command(args, |key| Command::Ttl { key }),
+            "EXPIRETIME" => Command::parse_key_command(args, |key| Command::ExpireTime { key }),
+            "PEXPIRETIME" => Command::parse_key_command(args, |key| Command::PExpireTime { key }),
             "PERSIST" => Command::parse_key_command(args, |key| Command::Persist { key }),
-            "EXPIRE" => Command::parse_expire_command(args),
-            "PEXPIREAT" => Command::parse_pexpireat_command(args),
+            "EXPIRE" => Command::parse_expire_commands(args, |key, seconds| Command::Expire {
+                key,
+                seconds,
+            }),
+            "PEXPIRE" => Command::parse_expire_commands(args, |key, milliseconds| {
+                Command::PExpire { key, milliseconds }
+            }),
+            "EXPIREAT" => Command::parse_expire_commands(args, |key, deadline_secs| {
+                Command::ExpireAt { key, deadline_secs }
+            }),
+            "PEXPIREAT" => Command::parse_expire_commands(args, |key, deadline_ms| {
+                Command::PExpireAt { key, deadline_ms }
+            }),
             "SELECT" => Command::parse_select_command(args),
             "DBSIZE" => Command::parse_dbsize_command(args),
             _ => Err(HandlerError::UnknownCommand(first_arg.clone())),
@@ -185,8 +206,11 @@ impl Command {
         Ok(make_cmd(keys))
     }
 
-    /// Helper function to parse the arguments of an EXPIRE command into a `Command::Expire` struct.
-    fn parse_expire_command(args: &[RespValue]) -> Result<Self, HandlerError> {
+    /// Helper function to parse the arguments of a EXPIRE-like commands into relevant struct.
+    fn parse_expire_commands(
+        args: &[RespValue],
+        make_cmd: fn(String, u64) -> Command,
+    ) -> Result<Self, HandlerError> {
         check_arity(args, 3)?;
 
         let key = match &args[1] {
@@ -200,25 +224,7 @@ impl Command {
             _ => unreachable!(),
         };
 
-        Ok(Command::Expire { key, seconds })
-    }
-
-    /// Helper function to parse the arguments of a PEXPIREAT command into a `Command::PExpireAt` struct.
-    fn parse_pexpireat_command(args: &[RespValue]) -> Result<Self, HandlerError> {
-        check_arity(args, 3)?;
-
-        let key = match &args[1] {
-            RespValue::BulkString(Some(s)) => s.clone(),
-            _ => unreachable!(),
-        };
-        let deadline_ms = match &args[2] {
-            RespValue::BulkString(Some(s)) => s
-                .parse::<u64>()
-                .map_err(|_| HandlerError::NotAnInteger(s.clone()))?,
-            _ => unreachable!(),
-        };
-
-        Ok(Command::PExpireAt { key, deadline_ms })
+        Ok(make_cmd(key, seconds))
     }
 
     /// Helper function to parse the arguments of a SELECT command into a `Command::Select` struct.
@@ -403,6 +409,119 @@ mod tests {
         assert_eq!(
             cmd.err().unwrap(),
             HandlerError::UnknownCommand("DOESNOTEXIST".to_string())
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_expiretime() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["EXPIRETIME", "foo"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::ExpireTime {
+                key: "foo".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_expiretime_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["EXPIRETIME", "foo", "bar"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 2,
+                got: 3
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_pexpiretime() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["PEXPIRETIME", "foo"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::PExpireTime {
+                key: "foo".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_pexpiretime_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["PEXPIRETIME", "foo", "bar"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 2,
+                got: 3
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_pexpire() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["PEXPIRE", "foo", "5000"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::PExpire {
+                key: "foo".to_string(),
+                milliseconds: 5000,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_pexpire_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["PEXPIRE", "foo"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 3,
+                got: 2
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_pexpire_not_an_integer() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["PEXPIRE", "foo", "notanumber"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::NotAnInteger("notanumber".to_string())
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_expireat() {
+        // 9999999999 secs ≈ year 2286 — safely in the future for the lifetime of this test
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["EXPIREAT", "foo", "9999999999"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::ExpireAt {
+                key: "foo".to_string(),
+                deadline_secs: 9999999999,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_expireat_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["EXPIREAT", "foo"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 3,
+                got: 2
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_expireat_not_an_integer() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["EXPIREAT", "foo", "notanumber"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::NotAnInteger("notanumber".to_string())
         );
     }
 
