@@ -65,19 +65,23 @@ impl Executor {
                 RespValue::Integer(count)
             }
 
-            Command::Ttl { key } => {
-                let expiry = self.store.get_ttl(key);
-                trace!("TTL {}: expiry = {:?}", key, expiry);
-                match expiry {
-                    Some(instant) => match instant.checked_duration_since(Instant::now()) {
-                        Some(remaining) => RespValue::Integer(remaining.as_secs() as i64),
-                        // Expiry instant is in the past — treat as a missing key
-                        None => RespValue::Integer(-2),
-                    },
-                    // No expiry entry: -1 if the key exists, -2 if it doesn't
-                    None => RespValue::Integer(if self.store.exists(key) { -1 } else { -2 }),
-                }
-            }
+            Command::Ttl { key } => self.resolve_expiry(key, "TTL", |r| r.as_secs() as i64),
+
+            Command::ExpireTime { key } => self.resolve_expiry(key, "EXPIRETIME", |r| {
+                let now_secs = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("system clock is before Unix epoch")
+                    .as_secs() as i64;
+                now_secs + r.as_secs() as i64
+            }),
+
+            Command::PExpireTime { key } => self.resolve_expiry(key, "PEXPIRETIME", |r| {
+                let now_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("system clock is before Unix epoch")
+                    .as_millis() as i64;
+                now_ms + r.as_millis() as i64
+            }),
 
             Command::Persist { key } => {
                 let removed = self.store.persist(key);
@@ -95,15 +99,41 @@ impl Executor {
                 }
             }
 
-            Command::PExpireAt { key, deadline_ms } => {
-                trace!("PEXPIREAT {} {}", key, deadline_ms);
-                let now_duration = SystemTime::now().duration_since(UNIX_EPOCH);
-                if now_duration.is_err() {
+            Command::PExpire { key, milliseconds } => {
+                trace!("PEXPIRE {} {}", key, milliseconds);
+                match Instant::now().checked_add(Duration::from_millis(*milliseconds)) {
+                    // checked_add returns None on overflow — reject with an error
+                    None => RespValue::SimpleError(
+                        "ERR invalid expire time in 'expire' command".to_string(),
+                    ),
+                    Some(deadline) => RespValue::Integer(self.store.set_ttl(key, deadline) as i64),
+                }
+            }
+
+            Command::ExpireAt { key, deadline_secs } => {
+                trace!("EXPIREAT {} {}", key, deadline_secs);
+                // Fail ExpireAt commands where the deadline is in the past
+                let now_secs = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("system clock is before Unix epoch")
+                    .as_secs();
+                if *deadline_secs <= now_secs {
+                    self.store.delete(key);
                     return RespValue::Integer(0);
                 }
 
+                let remaining_secs = deadline_secs.saturating_sub(now_secs);
+                let deadline = Instant::now() + Duration::from_secs(remaining_secs);
+                RespValue::Integer(self.store.set_ttl(key, deadline) as i64)
+            }
+
+            Command::PExpireAt { key, deadline_ms } => {
+                trace!("PEXPIREAT {} {}", key, deadline_ms);
                 // Fail PExpireAt commands where the deadline is in the past
-                let now_ms = now_duration.unwrap_or_default().as_millis() as u64;
+                let now_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("system clock is before Unix epoch")
+                    .as_millis() as u64;
                 if *deadline_ms <= now_ms {
                     self.store.delete(key);
                     return RespValue::Integer(0);
@@ -123,6 +153,22 @@ impl Executor {
             }
 
             Command::DbSize => RespValue::Integer(self.store.size() as i64),
+        }
+    }
+
+    /// Looks up the expiry for `key` and maps the remaining [`Duration`] to an integer response
+    /// via `f`. Returns `-2` if the key is expired or missing, `-1` if it exists with no expiry.
+    fn resolve_expiry(&self, key: &str, cmd: &str, f: impl FnOnce(Duration) -> i64) -> RespValue {
+        let expiry = self.store.get_ttl(key);
+        trace!("{} {}: expiry = {:?}", cmd, key, expiry);
+        match expiry {
+            Some(instant) => match instant.checked_duration_since(Instant::now()) {
+                Some(remaining) => RespValue::Integer(f(remaining)),
+                // Expiry instant is in the past — treat as a missing key
+                None => RespValue::Integer(-2),
+            },
+            // No expiry entry: -1 if the key exists, -2 if it doesn't
+            None => RespValue::Integer(if self.store.exists(key) { -1 } else { -2 }),
         }
     }
 }
