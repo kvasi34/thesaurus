@@ -1134,3 +1134,107 @@ async fn test_successful_write_cmd_written_to_aof() {
     assert!(resp2::decode(&mut reader).is_ok(), "AOF should contain SET");
     assert!(resp2::decode(&mut reader).is_ok(), "AOF should contain DEL");
 }
+
+#[tokio::test]
+async fn test_pexpire_written_as_pexpireat_to_aof() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let dir = tempfile::tempdir().unwrap();
+    let aof_path = dir.path().join("appendonly.aof");
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let aof_writer = AofWriter::new(&aof_path, AppendFSyncMode::No).unwrap();
+
+    let handle = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        Handler::new(socket, Executor::new(Store::new()), Some(aof_writer))
+            .run_handler()
+            .await
+            .unwrap();
+    });
+
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*3\r\n$7\r\nPEXPIRE\r\n$3\r\nfoo\r\n$7\r\n3600000\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    drop(client);
+    handle.await.unwrap();
+
+    let aof_contents = std::fs::read_to_string(&aof_path).unwrap();
+    assert!(
+        aof_contents.contains("PEXPIREAT"),
+        "AOF should contain PEXPIREAT"
+    );
+    assert!(
+        !aof_contents.contains("PEXPIRE\r\n"),
+        "AOF should not contain raw PEXPIRE"
+    );
+
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let expected_deadline_ms = now_ms + 3_600_000;
+    let aof_bytes = std::fs::read(&aof_path).unwrap();
+    let mut reader = std::io::BufReader::new(aof_bytes.as_slice());
+    resp2::decode(&mut reader).unwrap(); // consume the SET command
+    let pexpireat = resp2::decode(&mut reader).unwrap();
+    if let RespValue::Array(Some(args)) = pexpireat {
+        if let RespValue::BulkString(Some(deadline_str)) = &args[2] {
+            let deadline_ms: u64 = deadline_str.parse().unwrap();
+            let delta = deadline_ms.abs_diff(expected_deadline_ms);
+            assert!(
+                delta < 5_000,
+                "PEXPIREAT deadline should be within 5s of expected: got {deadline_ms}, expected ~{expected_deadline_ms}"
+            );
+        } else {
+            panic!("expected bulk string deadline");
+        }
+    } else {
+        panic!("expected PEXPIREAT array");
+    }
+}
+
+#[tokio::test]
+async fn test_expireat_written_to_aof() {
+    let dir = tempfile::tempdir().unwrap();
+    let aof_path = dir.path().join("appendonly.aof");
+    let aof_writer = AofWriter::new(&aof_path, AppendFSyncMode::No).unwrap();
+    let (addr, handle) = start_handler_with_aof(aof_writer).await;
+
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client.write_all(&expireat_cmd("foo", 3600)).await.unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    drop(client);
+    handle.await.unwrap();
+
+    let aof_bytes = std::fs::read(&aof_path).unwrap();
+    let mut reader = std::io::BufReader::new(aof_bytes.as_slice());
+    resp2::decode(&mut reader).unwrap(); // consume the SET command
+    let expireat = resp2::decode(&mut reader).unwrap();
+    if let RespValue::Array(Some(args)) = expireat {
+        assert_eq!(args[0], RespValue::BulkString(Some("EXPIREAT".to_string())));
+        assert_eq!(args[1], RespValue::BulkString(Some("foo".to_string())));
+    } else {
+        panic!("expected EXPIREAT array");
+    }
+}

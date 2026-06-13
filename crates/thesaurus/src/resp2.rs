@@ -120,6 +120,20 @@ pub fn convert_expire_to_pexpireat(key: String, seconds: u64) -> Vec<u8> {
     ])))
 }
 
+/// Converts PEXPIRE (relative milliseconds) to PEXPIREAT (absolute Unix ms).
+pub fn convert_pexpire_to_pexpireat(key: String, milliseconds: u64) -> Vec<u8> {
+    let deadline_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+        + milliseconds;
+    encode(&RespValue::Array(Some(vec![
+        RespValue::BulkString(Some("PEXPIREAT".to_string())),
+        RespValue::BulkString(Some(key)),
+        RespValue::BulkString(Some(deadline_ms.to_string())),
+    ])))
+}
+
 // Parses the first line of a RESP2 message into its prefix byte and the rest of the content
 fn parse_header(line: &str) -> Result<(u8, String), RespError> {
     let bytes = line.as_bytes();
@@ -600,5 +614,57 @@ mod tests {
             ]))),
             b"*5\r\n:1\r\n:2\r\n:3\r\n:4\r\n$5\r\nhello\r\n"
         );
+    }
+
+    #[test]
+    fn test_convert_expire_to_pexpireat() {
+        let before_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let bytes = convert_expire_to_pexpireat("mykey".to_string(), 10);
+        let after_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        let mut cursor = Cursor::new(bytes);
+        let RespValue::Array(Some(arr)) = decode(&mut cursor).unwrap() else {
+            panic!("expected array");
+        };
+        assert_eq!(arr[0], RespValue::BulkString(Some("PEXPIREAT".to_string())));
+        assert_eq!(arr[1], RespValue::BulkString(Some("mykey".to_string())));
+        let RespValue::BulkString(Some(deadline_str)) = &arr[2] else {
+            panic!("expected bulk string");
+        };
+        let deadline_ms: u64 = deadline_str.parse().unwrap();
+        assert!(deadline_ms >= before_ms + 10_000);
+        assert!(deadline_ms <= after_ms + 10_000);
+    }
+
+    #[test]
+    fn test_convert_pexpire_to_pexpireat() {
+        let before_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let bytes = convert_pexpire_to_pexpireat("mykey".to_string(), 5000);
+        let after_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        let mut cursor = Cursor::new(bytes);
+        let RespValue::Array(Some(arr)) = decode(&mut cursor).unwrap() else {
+            panic!("expected array");
+        };
+        assert_eq!(arr[0], RespValue::BulkString(Some("PEXPIREAT".to_string())));
+        assert_eq!(arr[1], RespValue::BulkString(Some("mykey".to_string())));
+        let RespValue::BulkString(Some(deadline_str)) = &arr[2] else {
+            panic!("expected bulk string");
+        };
+        let deadline_ms: u64 = deadline_str.parse().unwrap();
+        assert!(deadline_ms >= before_ms + 5_000);
+        assert!(deadline_ms <= after_ms + 5_000);
     }
 }

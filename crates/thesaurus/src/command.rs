@@ -129,9 +129,11 @@ impl Command {
             Command::Set { .. }
                 | Command::Delete { .. }
                 | Command::GetDel { .. }
-                | Command::Expire { .. }
-                | Command::PExpireAt { .. }
                 | Command::Persist { .. }
+                | Command::Expire { .. }
+                | Command::PExpire { .. }
+                | Command::ExpireAt { .. }
+                | Command::PExpireAt { .. }
         )
     }
 
