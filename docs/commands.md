@@ -1,17 +1,22 @@
 # Supported commands
 
-| Command     | Signature               | Supported options |
-|-------------|-------------------------|-------------------|
-| `PING`      | `PING [message]`        | —                 |
-| `GET`       | `GET key`               | —                 |
-| `SET`       | `SET key value`         |                   |
-| `DEL`       | `DEL key [key …]`       | —                 |
-| `GETDEL`    | `GETDEL key`            | —                 |
-| `EXISTS`    | `EXISTS key [key …]`    | —                 |
-| `EXPIRE`    | `EXPIRE key seconds`    |                   |
-| `TTL`       | `TTL key`               | —                 |
-| `PERSIST`   | `PERSIST key`           | —                 |
-| `PEXPIREAT` | `PEXPIREAT key unix-ms` |                   |
-| `SELECT`    | `SELECT index`          | —                 |
+| Command        | Signature                    | Supported options |
+|----------------|------------------------------|-------------------|
+| `PING`         | `PING [message]`             | —                 |
+| `GET`          | `GET key`                    | —                 |
+| `SET`          | `SET key value`              |                   |
+| `DEL`          | `DEL key [key …]`            | —                 |
+| `GETDEL`       | `GETDEL key`                 | —                 |
+| `EXISTS`       | `EXISTS key [key …]`         | —                 |
+| `EXPIRE`       | `EXPIRE key seconds`         |                   |
+| `PEXPIRE`      | `PEXPIRE key milliseconds`   |                   |
+| `EXPIREAT`     | `EXPIREAT key unix-secs`     |                   |
+| `PEXPIREAT`    | `PEXPIREAT key unix-ms`      |                   |
+| `TTL`          | `TTL key`                    | —                 |
+| `EXPIRETIME`   | `EXPIRETIME key`             | —                 |
+| `PEXPIRETIME`  | `PEXPIRETIME key`            | —                 |
+| `PERSIST`      | `PERSIST key`                | —                 |
+| `DBSIZE`       | `DBSIZE`                     | —                 |
+| `SELECT`       | `SELECT index`               | —                 |
 
 `—` indicates Redis has no options for this command. Empty cells indicate Redis has options that are not yet supported.

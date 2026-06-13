@@ -41,7 +41,7 @@ TCP bytes
 TCP bytes (response)
 ```
 
-For write commands (`SET`, `DEL`, `EXPIRE`, `PERSIST`, `PEXPIREAT`), the handler also appends the command to the AOF after a successful execution (see [AOF persistence](#aof-persistence) below). `EXPIRE` is stored as `PEXPIREAT` with an absolute Unix millisecond deadline so TTLs survive restarts correctly.
+For write commands (`SET`, `DEL`, `GETDEL`, `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT`, `PERSIST`), the handler also appends the command to the AOF after a successful execution (see [AOF persistence](#aof-persistence) below).
 
 ### 1. RESP2 framing (`crates/thesaurus/src/resp2.rs`)
 
@@ -88,7 +88,7 @@ Command::Set { key: "foo", value: "bar" }
 
 AOF is opt-in (`appendonly = yes` in `config.ini`). When enabled:
 
-**Write path** — after a write command succeeds, `Handler` appends the RESP2-encoded command to an `AofWriter`. `EXPIRE` is rewritten as `PEXPIREAT` with an absolute Unix millisecond deadline before being appended, so replaying the file after a restart sets the correct remaining TTL rather than resetting the clock.
+**Write path** — after a write command succeeds, `Handler` appends the RESP2-encoded command to an `AofWriter`. Relative-TTL commands are rewritten as `PEXPIREAT` with an absolute Unix millisecond deadline before being appended: `EXPIRE` (seconds → ms) and `PEXPIRE` (ms offset → absolute ms). This ensures replaying the file after a restart sets the correct remaining TTL rather than resetting the clock. `EXPIREAT` and `PEXPIREAT` are already absolute timestamps and are written verbatim.
 
 **Startup replay** — before the TCP listener opens, `aof::sync_store_with_aof` reads the AOF with the sync `resp2::decode`, parses each entry via `Command::from_resp2`, and drives it through the same `Executor`. The store is fully restored before any client can connect.
 

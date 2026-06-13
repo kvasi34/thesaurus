@@ -11,6 +11,12 @@ use crate::{
     resp2::{self, RespValue},
 };
 
+/// Carries the data needed to convert a relative-TTL command to `PEXPIREAT` before AOF persistence.
+enum ExpireAofConversion {
+    Expire { key: String, seconds: u64 },
+    PExpire { key: String, milliseconds: u64 },
+}
+
 /// TCP socket connection handler.
 #[derive(Debug)]
 pub struct Handler {
@@ -62,15 +68,18 @@ impl Handler {
             // Capture the write flag before cmd is consumed by the match statement below
             let is_write_cmd = cmd.as_ref().is_ok_and(|c| c.is_write());
 
-            // Capture EXPIRE key and seconds; AOF persists EXPIRE commands as PEXPIREAT. The key and the seconds are needed
-            // for this conversion later on.
+            // Capture relative-TTL commands before cmd is consumed; AOF persists them as PEXPIREAT.
             let expire_info = is_write_cmd.then(|| {
-                cmd.as_ref().ok().and_then(|c| {
-                    if let Command::Expire { key, seconds } = c {
-                        Some((key.clone(), *seconds))
-                    } else {
-                        None
-                    }
+                cmd.as_ref().ok().and_then(|c| match c {
+                    Command::Expire { key, seconds } => Some(ExpireAofConversion::Expire {
+                        key: key.clone(),
+                        seconds: *seconds,
+                    }),
+                    Command::PExpire { key, milliseconds } => Some(ExpireAofConversion::PExpire {
+                        key: key.clone(),
+                        milliseconds: *milliseconds,
+                    }),
+                    _ => None,
                 })
             });
 
@@ -96,7 +105,12 @@ impl Handler {
             {
                 // Re-encode the command before writing to the AOF
                 let cmd_bytes = match expire_info.unwrap() {
-                    Some((key, seconds)) => resp2::convert_expire_to_pexpireat(key, seconds),
+                    Some(ExpireAofConversion::Expire { key, seconds }) => {
+                        resp2::convert_expire_to_pexpireat(key, seconds)
+                    }
+                    Some(ExpireAofConversion::PExpire { key, milliseconds }) => {
+                        resp2::convert_pexpire_to_pexpireat(key, milliseconds)
+                    }
                     None => resp2::encode(&resp_value),
                 };
 
