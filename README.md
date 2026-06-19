@@ -51,6 +51,7 @@ Server behaviour is configured via an INI file passed with `--config`. Environme
 | `appendfilename` | `appendonly.aof` | AOF file name                               |
 | `appenddirname`  | `appendonlydir`| Directory for the AOF file                   |
 | `appendfsync`    | `everysec`     | Fsync policy: `always`, `everysec`, or `no`  |
+| `lazyfree-lazy-user-flush` | `no` | When `yes`, bare `FLUSHDB` frees memory asynchronously |
 
 ## Supported commands
 

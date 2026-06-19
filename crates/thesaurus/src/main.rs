@@ -34,7 +34,7 @@ async fn main() -> io::Result<()> {
     let store = store::Store::new();
 
     // Wrap the store in an executor; cloned cheaply into each connection handler
-    let executor = executor::Executor::new(store.clone());
+    let executor = executor::Executor::new(store.clone(), cfg.lazyfree_lazy_user_flush);
 
     if let Err(e) = aof::sync_store_with_aof(
         cfg.appendonly,
