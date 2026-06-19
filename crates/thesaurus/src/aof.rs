@@ -288,7 +288,7 @@ mod tests {
             true,
             dir.path().to_str().unwrap(),
             "appendonly.aof",
-            Executor::new(store.clone()),
+            Executor::new(store.clone(), false),
         )
         .unwrap();
 
@@ -320,7 +320,7 @@ mod tests {
             true,
             dir.path().to_str().unwrap(),
             "appendonly.aof",
-            Executor::new(store.clone()),
+            Executor::new(store.clone(), false),
         )
         .unwrap();
 
@@ -345,7 +345,7 @@ mod tests {
             true,
             dir.path().to_str().unwrap(),
             "appendonly.aof",
-            Executor::new(store.clone()),
+            Executor::new(store.clone(), false),
         )
         .unwrap();
 
@@ -371,7 +371,7 @@ mod tests {
             true,
             dir.path().to_str().unwrap(),
             "appendonly.aof",
-            Executor::new(store.clone()),
+            Executor::new(store.clone(), false),
         )
         .unwrap();
 
@@ -388,7 +388,7 @@ mod tests {
             false,
             "nonexistent",
             "file.aof",
-            Executor::new(store.clone()),
+            Executor::new(store.clone(), false),
         );
         assert!(result.is_ok());
     }

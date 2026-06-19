@@ -20,12 +20,16 @@ use crate::store::Store;
 #[derive(Clone, Debug)]
 pub struct Executor {
     store: Store,
+    lazyfree_lazy_user_flush: bool,
 }
 
 impl Executor {
     /// Creates a new `Executor` backed by `Store`.
-    pub fn new(store: Store) -> Self {
-        Executor { store }
+    pub fn new(store: Store, lazyfree_lazy_user_flush: bool) -> Self {
+        Executor {
+            store,
+            lazyfree_lazy_user_flush,
+        }
     }
 
     /// Applies `cmd` to the store and returns the RESP2 response value.
@@ -155,9 +159,17 @@ impl Executor {
             Command::DbSize => RespValue::Integer(self.store.size() as i64),
 
             Command::FlushDb { mode } => {
-                match mode {
-                    FlushMode::Sync => self.store.clear(),
-                    FlushMode::Async => self.store.clear_async(),
+                // Prioritize command argument over config value
+                if mode.is_some() {
+                    match mode.as_ref().unwrap() {
+                        FlushMode::Sync => self.store.clear(),
+                        FlushMode::Async => self.store.clear_async(),
+                    }
+                } else {
+                    match self.lazyfree_lazy_user_flush {
+                        true => self.store.clear_async(),
+                        false => self.store.clear(),
+                    }
                 }
 
                 RespValue::SimpleString("OK".to_string())

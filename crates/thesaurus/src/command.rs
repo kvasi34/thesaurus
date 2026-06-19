@@ -62,7 +62,7 @@ pub enum Command {
     /// Returns the number of keys in the database.
     DbSize,
     /// Flush all keys from the database.
-    FlushDb { mode: FlushMode },
+    FlushDb { mode: Option<FlushMode> },
 }
 
 impl Command {
@@ -276,12 +276,11 @@ impl Command {
             });
         }
 
-        // Extract the FlushDb mode if provided
         let mode = match args.get(1) {
-            None => FlushMode::Sync, // Defaults to Sync mode
+            None => None,
             Some(RespValue::BulkString(Some(s))) => match s.as_str() {
-                "SYNC" => FlushMode::Sync,
-                "ASYNC" => FlushMode::Async,
+                "SYNC" => Some(FlushMode::Sync),
+                "ASYNC" => Some(FlushMode::Async),
                 _ => return Err(HandlerError::SyntaxError),
             },
             _ => unreachable!(),

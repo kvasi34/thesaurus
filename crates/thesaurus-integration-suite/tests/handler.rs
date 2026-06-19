@@ -16,11 +16,18 @@ async fn start_handler() -> std::net::SocketAddr {
 }
 
 async fn start_handler_with_store(store: Store) -> std::net::SocketAddr {
+    start_handler_with_store_and_lazyfree(store, false).await
+}
+
+async fn start_handler_with_store_and_lazyfree(
+    store: Store,
+    lazyfree_lazy_user_flush: bool,
+) -> std::net::SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         let (socket, _) = listener.accept().await.unwrap();
-        Handler::new(socket, Executor::new(store), None)
+        Handler::new(socket, Executor::new(store, lazyfree_lazy_user_flush), None)
             .run_handler()
             .await
             .unwrap();
@@ -1026,6 +1033,47 @@ async fn test_flushdb_async() {
 }
 
 #[tokio::test]
+async fn test_flushdb_default_is_sync_when_lazyfree_off() {
+    let store = Store::new();
+    store.set("foo", "bar".to_string());
+    store.set("baz", "qux".to_string());
+
+    let addr = start_handler_with_store_and_lazyfree(store.clone(), false).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client.write_all(b"*1\r\n$7\r\nFLUSHDB\r\n").await.unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+    assert_eq!(store.size(), 0);
+}
+
+#[tokio::test]
+async fn test_flushdb_default_is_async_when_lazyfree_on() {
+    let store = Store::new();
+    store.set("foo", "bar".to_string());
+    store.set("baz", "qux".to_string());
+
+    let addr = start_handler_with_store_and_lazyfree(store.clone(), true).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client.write_all(b"*1\r\n$7\r\nFLUSHDB\r\n").await.unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+
+    // OK guarantees the swap is done. Insert into the new (empty) data structure
+    // while the background drop task may still be pending.
+    store.set("new_key", "value".to_string());
+
+    // Yield to give the background drop task a chance to run — it holds only
+    // the old data and must not affect new_key.
+    tokio::task::yield_now().await;
+
+    assert_eq!(store.get("new_key"), Some("value".to_string()));
+    assert_eq!(store.get("foo"), None);
+    assert_eq!(store.get("baz"), None);
+}
+
+#[tokio::test]
 async fn test_expire_written_as_pexpireat_to_aof() {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1038,7 +1086,7 @@ async fn test_expire_written_as_pexpireat_to_aof() {
 
     let handle = tokio::spawn(async move {
         let (socket, _) = listener.accept().await.unwrap();
-        Handler::new(socket, Executor::new(Store::new()), Some(aof_writer))
+        Handler::new(socket, Executor::new(Store::new(), false), Some(aof_writer))
             .run_handler()
             .await
             .unwrap();
@@ -1111,7 +1159,7 @@ async fn start_handler_with_aof(
     let addr = listener.local_addr().unwrap();
     let handle = tokio::spawn(async move {
         let (socket, _) = listener.accept().await.unwrap();
-        Handler::new(socket, Executor::new(Store::new()), Some(aof_writer))
+        Handler::new(socket, Executor::new(Store::new(), false), Some(aof_writer))
             .run_handler()
             .await
             .unwrap();
@@ -1200,7 +1248,7 @@ async fn test_pexpire_written_as_pexpireat_to_aof() {
 
     let handle = tokio::spawn(async move {
         let (socket, _) = listener.accept().await.unwrap();
-        Handler::new(socket, Executor::new(Store::new()), Some(aof_writer))
+        Handler::new(socket, Executor::new(Store::new(), false), Some(aof_writer))
             .run_handler()
             .await
             .unwrap();

@@ -10,6 +10,7 @@ const DEFAULTS: &[(&str, &str)] = &[
     ("appendfilename", "appendonly.aof"),
     ("appenddirname", "appendonlydir"),
     ("appendfsync", "everysec"),
+    ("lazyfree_lazy_user_flush", "no"),
 ];
 
 /// Returns the compile-time default string value for a config key from [`DEFAULTS`].
@@ -39,6 +40,9 @@ pub struct ThesaurusConfig {
     pub appenddirname: String,
     /// fsync strategy for the AOF.
     pub appendfsync: AppendFSyncMode,
+
+    /// When `true`, bare `FLUSHDB` (no modifier) frees memory asynchronously.
+    pub lazyfree_lazy_user_flush: bool,
 }
 
 impl Default for ThesaurusConfig {
@@ -46,10 +50,12 @@ impl Default for ThesaurusConfig {
         ThesaurusConfig {
             max_connections: default_val("max_connections").parse().unwrap(),
             hz: default_val("hz").parse().unwrap(),
-            appendonly: appendonly_from_str(default_val("appendonly")).unwrap(),
+            appendonly: yes_no_from_str(default_val("appendonly")).unwrap(),
             appendfilename: default_val("appendfilename").to_string(),
             appenddirname: default_val("appenddirname").to_string(),
             appendfsync: appendfsync_from_str(default_val("appendfsync")).unwrap(),
+            lazyfree_lazy_user_flush: yes_no_from_str(default_val("lazyfree_lazy_user_flush"))
+                .unwrap(),
         }
     }
 }
@@ -81,25 +87,26 @@ pub fn load_config(path: &str) -> Result<ThesaurusConfig, String> {
             .get::<usize>("max_connections")
             .map_err(|e| e.to_string())?,
         hz: config.get::<u64>("hz").map_err(|e| e.to_string())?,
-        appendonly: map_config_to_appendonly(&config)?,
+        appendonly: get_bool(&config, "appendonly")?,
         appendfilename: config.get("appendfilename").map_err(|e| e.to_string())?,
         appenddirname: config.get("appenddirname").map_err(|e| e.to_string())?,
         appendfsync: map_config_to_appendfsync_mode(&config)?,
+        lazyfree_lazy_user_flush: get_bool(&config, "lazyfree-lazy-user-flush")?,
     })
 }
 
-/// Helper function that maps a `String` to a `bool` value for `appendonly`.
-fn map_config_to_appendonly(config: &Config) -> Result<bool, String> {
-    let val: String = config.get("appendonly").map_err(|e| e.to_string())?;
-    appendonly_from_str(&val)
+/// Reads a `yes`/`no` config key and returns its `bool` value.
+fn get_bool(config: &Config, key: &str) -> Result<bool, String> {
+    let val: String = config.get(key).map_err(|e| e.to_string())?;
+    yes_no_from_str(&val)
 }
 
-/// Parses an `appendonly` string value (`"yes"` or `"no"`) into a `bool`.
-fn appendonly_from_str(s: &str) -> Result<bool, String> {
+/// Parses a `"yes"` / `"no"` string into a `bool`.
+fn yes_no_from_str(s: &str) -> Result<bool, String> {
     match s {
         "yes" => Ok(true),
         "no" => Ok(false),
-        _ => Err(format!("{} is not a valid appendonly value", s)),
+        _ => Err(format!("expected 'yes' or 'no', got '{}'", s)),
     }
 }
 
