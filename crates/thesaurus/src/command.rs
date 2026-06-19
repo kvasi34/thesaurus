@@ -271,7 +271,7 @@ impl Command {
     fn parse_flushdb_command(args: &[RespValue]) -> Result<Self, HandlerError> {
         if args.len() > 2 {
             return Err(HandlerError::WrongArity {
-                expected: 2,
+                expected: 1,
                 got: args.len() as u8,
             });
         }
