@@ -19,6 +19,13 @@ pub struct Cli {
     pub config: Option<String>,
 }
 
+/// FlushDb command argument (SYNC or ASYNC).
+#[derive(Debug, PartialEq)]
+pub enum FlushMode {
+    Sync,
+    Async,
+}
+
 /// Command parsed from raw TCP client input.
 #[derive(Debug, PartialEq)]
 pub enum Command {
@@ -54,6 +61,8 @@ pub enum Command {
     Select { index: u8 },
     /// Returns the number of keys in the database.
     DbSize,
+    /// Flush all keys from the database.
+    FlushDb { mode: FlushMode },
 }
 
 impl Command {
@@ -118,6 +127,7 @@ impl Command {
             }),
             "SELECT" => Command::parse_select_command(args),
             "DBSIZE" => Command::parse_dbsize_command(args),
+            "FLUSHDB" => Command::parse_flushdb_command(args),
             _ => Err(HandlerError::UnknownCommand(first_arg.clone())),
         }
     }
@@ -134,6 +144,7 @@ impl Command {
                 | Command::PExpire { .. }
                 | Command::ExpireAt { .. }
                 | Command::PExpireAt { .. }
+                | Command::FlushDb { .. }
         )
     }
 
@@ -254,6 +265,29 @@ impl Command {
         check_arity(args, 1)?;
 
         Ok(Command::DbSize)
+    }
+
+    /// Helper function to parse the arguments of a FLUSHDB command into a `Command::FlushDb` struct.
+    fn parse_flushdb_command(args: &[RespValue]) -> Result<Self, HandlerError> {
+        if args.len() > 2 {
+            return Err(HandlerError::WrongArity {
+                expected: 1,
+                got: args.len() as u8,
+            });
+        }
+
+        // Extract the FlushDb mode if provided
+        let mode = match args.get(1) {
+            None => FlushMode::Sync, // Defaults to Sync mode
+            Some(RespValue::BulkString(Some(s))) => match s.as_str() {
+                "SYNC" => FlushMode::Sync,
+                "ASYNC" => FlushMode::Async,
+                _ => return Err(HandlerError::SyntaxError),
+            },
+            _ => unreachable!(),
+        };
+
+        Ok(Command::FlushDb { mode })
     }
 }
 

@@ -18,5 +18,6 @@
 | `PERSIST`      | `PERSIST key`                | —                 |
 | `DBSIZE`       | `DBSIZE`                     | —                 |
 | `SELECT`       | `SELECT index`               | —                 |
+| `FLUSHDB`      | `FLUSHDB [ASYNC\|SYNC]`      | ASYNC, SYNC       |
 
 `—` indicates Redis has no options for this command. Empty cells indicate Redis has options that are not yet supported.

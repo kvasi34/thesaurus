@@ -41,7 +41,7 @@ TCP bytes
 TCP bytes (response)
 ```
 
-For write commands (`SET`, `DEL`, `GETDEL`, `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT`, `PERSIST`), the handler also appends the command to the AOF after a successful execution (see [AOF persistence](#aof-persistence) below).
+For write commands (`SET`, `DEL`, `GETDEL`, `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT`, `PERSIST`, `FLUSHDB`), the handler also appends the command to the AOF after a successful execution (see [AOF persistence](#aof-persistence) below).
 
 ### 1. RESP2 framing (`crates/thesaurus/src/resp2.rs`)
 
