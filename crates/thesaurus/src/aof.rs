@@ -353,6 +353,34 @@ mod tests {
     }
 
     #[test]
+    fn test_sync_store_replays_flushdb() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("appendonly.aof");
+        write_aof(
+            &path,
+            &[
+                &["SET", "foo", "bar"],
+                &["SET", "baz", "qux"],
+                &["FLUSHDB"],
+                &["SET", "new_key", "value"],
+            ],
+        );
+
+        let store = Store::new();
+        sync_store_with_aof(
+            true,
+            dir.path().to_str().unwrap(),
+            "appendonly.aof",
+            Executor::new(store.clone()),
+        )
+        .unwrap();
+
+        assert_eq!(store.get("foo"), None);
+        assert_eq!(store.get("baz"), None);
+        assert_eq!(store.get("new_key"), Some("value".to_string()));
+    }
+
+    #[test]
     fn test_sync_store_disabled_skips() {
         let store = Store::new();
         // enabled=false: should not attempt to open any file

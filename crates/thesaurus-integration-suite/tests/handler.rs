@@ -974,6 +974,58 @@ async fn test_dbsize() {
 }
 
 #[tokio::test]
+async fn test_flushdb() {
+    use std::time::{Duration, Instant};
+    let store = Store::new();
+    store.set("foo", "bar".to_string());
+    store.set_ttl("foo", Instant::now() - Duration::from_secs(1));
+
+    let addr = start_handler_with_store(store.clone()).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client.write_all(b"*1\r\n$7\r\nFLUSHDB\r\n").await.unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+    assert_eq!(store.size(), 0);
+}
+
+#[tokio::test]
+async fn test_flushdb_sync() {
+    let store = Store::new();
+    store.set("foo", "bar".to_string());
+    store.set("baz", "qux".to_string());
+
+    let addr = start_handler_with_store(store.clone()).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*2\r\n$7\r\nFLUSHDB\r\n$4\r\nSYNC\r\n")
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+    assert_eq!(store.size(), 0);
+}
+
+#[tokio::test]
+async fn test_flushdb_async() {
+    let store = Store::new();
+    store.set("foo", "bar".to_string());
+    store.set("baz", "qux".to_string());
+
+    let addr = start_handler_with_store(store.clone()).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*2\r\n$7\r\nFLUSHDB\r\n$5\r\nASYNC\r\n")
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+    assert_eq!(store.size(), 0);
+}
+
+#[tokio::test]
 async fn test_expire_written_as_pexpireat_to_aof() {
     use std::time::{SystemTime, UNIX_EPOCH};
 

@@ -48,6 +48,8 @@ pub enum HandlerError {
     NotAnInteger(String),
     /// The database index provided to SELECT is out of range.
     DbIndexOutOfRange,
+    /// The command was called with an unrecognised option or argument.
+    SyntaxError,
 }
 
 impl fmt::Display for HandlerError {
@@ -68,6 +70,7 @@ impl fmt::Display for HandlerError {
             ),
             HandlerError::NotAnInteger(s) => write!(f, "not an integer: '{}'", s),
             HandlerError::DbIndexOutOfRange => write!(f, "ERR DB index is out of range"),
+            HandlerError::SyntaxError => write!(f, "ERR syntax error"),
         }
     }
 }

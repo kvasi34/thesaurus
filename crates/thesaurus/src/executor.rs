@@ -2,7 +2,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use log::trace;
 
-use crate::command::Command;
+use crate::command::{Command, FlushMode};
 use crate::resp2::RespValue;
 use crate::store::Store;
 
@@ -153,6 +153,15 @@ impl Executor {
             }
 
             Command::DbSize => RespValue::Integer(self.store.size() as i64),
+
+            Command::FlushDb { mode } => {
+                match mode {
+                    FlushMode::Sync => self.store.clear(),
+                    FlushMode::Async => self.store.clear_async(),
+                }
+
+                RespValue::SimpleString("OK".to_string())
+            }
         }
     }
 

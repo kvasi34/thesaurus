@@ -26,7 +26,7 @@ All source files live under `crates/thesaurus/src/`:
 
 ## Commands
 
-Supported: `PING`, `GET`, `SET`, `DEL`, `GETDEL`, `EXISTS`, `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT`, `TTL`, `EXPIRETIME`, `PEXPIRETIME`, `PERSIST`, `DBSIZE`, `SELECT`
+Supported: `PING`, `GET`, `SET`, `DEL`, `GETDEL`, `EXISTS`, `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT`, `TTL`, `EXPIRETIME`, `PEXPIRETIME`, `PERSIST`, `DBSIZE`, `SELECT`, `FLUSHDB`
 
 ## Running
 

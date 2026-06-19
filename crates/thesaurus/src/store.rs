@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::mem;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
@@ -134,6 +135,30 @@ impl Store {
     pub fn size(&self) -> usize {
         let guard = self.inner.read().unwrap();
         guard.data.len()
+    }
+
+    /// Removes all entries from the store and the expiry index.
+    pub fn clear(&self) {
+        let mut guard = self.inner.write().unwrap();
+        guard.expiry_index.clear();
+        guard.data.clear();
+    }
+
+    /// Creates a new store and expiry index and deletes old ones. O(1) time complexity.
+    pub fn clear_async(&self) {
+        let old_data;
+        let old_expiry_index;
+
+        {
+            let mut guard = self.inner.write().unwrap();
+            old_data = mem::take(&mut guard.data);
+            old_expiry_index = mem::take(&mut guard.expiry_index);
+        }
+
+        tokio::spawn(async move {
+            drop(old_data);
+            drop(old_expiry_index);
+        });
     }
 }
 
