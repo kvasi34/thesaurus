@@ -35,146 +35,174 @@ impl Executor {
     /// Applies `cmd` to the store and returns the RESP2 response value.
     pub fn execute(&self, cmd: &Command) -> RespValue {
         match cmd {
-            Command::Ping { message } => match message {
-                None => RespValue::SimpleString("PONG".to_string()),
-                Some(msg) => RespValue::BulkString(Some(msg.clone())),
-            },
+            Command::Ping { message } => self.ping(message.as_deref()),
+            Command::Get { key } => self.get(key),
+            Command::Set { key, value } => self.set(key, value),
+            Command::Delete { keys } => self.delete(keys),
+            Command::GetDel { key } => self.get_del(key),
+            Command::Exists { keys } => self.exists(keys),
+            Command::Ttl { key } => self.ttl(key),
+            Command::ExpireTime { key } => self.expire_time(key),
+            Command::PExpireTime { key } => self.pexpire_time(key),
+            Command::Persist { key } => self.persist(key),
+            Command::Expire { key, seconds } => self.expire(key, *seconds),
+            Command::PExpire { key, milliseconds } => self.pexpire(key, *milliseconds),
+            Command::ExpireAt { key, deadline_secs } => self.expire_at(key, *deadline_secs),
+            Command::PExpireAt { key, deadline_ms } => self.pexpire_at(key, *deadline_ms),
+            Command::Select { index } => self.select(*index),
+            Command::DbSize => self.db_size(),
+            Command::FlushDb { mode } => self.flush_db(mode.as_ref()),
+        }
+    }
 
-            Command::Get { key } => {
-                let value = self.store.get(key);
-                trace!("GET {}: {:?}", key, value);
-                RespValue::BulkString(value)
+    fn ping(&self, message: Option<&str>) -> RespValue {
+        match message {
+            None => RespValue::SimpleString("PONG".to_string()),
+            Some(msg) => RespValue::BulkString(Some(msg.to_string())),
+        }
+    }
+
+    fn get(&self, key: &str) -> RespValue {
+        let value = self.store.get(key);
+        trace!("GET {}: {:?}", key, value);
+        RespValue::BulkString(value)
+    }
+
+    fn set(&self, key: &str, value: &str) -> RespValue {
+        trace!("SET {} = {}", key, value);
+        self.store.set(key, value.to_string());
+        RespValue::SimpleString("OK".to_string())
+    }
+
+    fn delete(&self, keys: &[String]) -> RespValue {
+        let count: i64 = keys.iter().map(|k| self.store.delete(k) as i64).sum();
+        trace!("DEL {:?}: deleted {}", keys, count);
+        RespValue::Integer(count)
+    }
+
+    fn get_del(&self, key: &str) -> RespValue {
+        let value = self.store.get_del(key);
+        trace!("GETDEL {}: {:?}", key, value);
+        RespValue::BulkString(value)
+    }
+
+    fn exists(&self, keys: &[String]) -> RespValue {
+        let count: i64 = keys.iter().map(|k| self.store.exists(k) as i64).sum();
+        RespValue::Integer(count)
+    }
+
+    fn ttl(&self, key: &str) -> RespValue {
+        self.resolve_expiry(key, "TTL", |r| r.as_secs() as i64)
+    }
+
+    fn expire_time(&self, key: &str) -> RespValue {
+        self.resolve_expiry(key, "EXPIRETIME", |r| {
+            let now_secs = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock is before Unix epoch")
+                .as_secs() as i64;
+            now_secs + r.as_secs() as i64
+        })
+    }
+
+    fn pexpire_time(&self, key: &str) -> RespValue {
+        self.resolve_expiry(key, "PEXPIRETIME", |r| {
+            let now_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock is before Unix epoch")
+                .as_millis() as i64;
+            now_ms + r.as_millis() as i64
+        })
+    }
+
+    fn persist(&self, key: &str) -> RespValue {
+        let removed = self.store.persist(key);
+        RespValue::Integer(removed as i64)
+    }
+
+    fn expire(&self, key: &str, seconds: u64) -> RespValue {
+        trace!("EXPIRE {} {}", key, seconds);
+        match Instant::now().checked_add(Duration::from_secs(seconds)) {
+            // checked_add returns None on overflow — reject with an error
+            None => {
+                RespValue::SimpleError("ERR invalid expire time in 'expire' command".to_string())
             }
+            Some(deadline) => RespValue::Integer(self.store.set_ttl(key, deadline) as i64),
+        }
+    }
 
-            Command::Set { key, value } => {
-                trace!("SET {} = {}", key, value);
-                self.store.set(key, value.clone());
-                RespValue::SimpleString("OK".to_string())
+    fn pexpire(&self, key: &str, milliseconds: u64) -> RespValue {
+        trace!("PEXPIRE {} {}", key, milliseconds);
+        match Instant::now().checked_add(Duration::from_millis(milliseconds)) {
+            // checked_add returns None on overflow — reject with an error
+            None => {
+                RespValue::SimpleError("ERR invalid expire time in 'expire' command".to_string())
             }
+            Some(deadline) => RespValue::Integer(self.store.set_ttl(key, deadline) as i64),
+        }
+    }
 
-            Command::Delete { keys } => {
-                let count: i64 = keys.iter().map(|k| self.store.delete(k) as i64).sum();
-                trace!("DEL {:?}: deleted {}", keys, count);
-                RespValue::Integer(count)
+    fn expire_at(&self, key: &str, deadline_secs: u64) -> RespValue {
+        trace!("EXPIREAT {} {}", key, deadline_secs);
+        // Fail ExpireAt commands where the deadline is in the past
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock is before Unix epoch")
+            .as_secs();
+        if deadline_secs <= now_secs {
+            self.store.delete(key);
+            return RespValue::Integer(0);
+        }
+
+        let remaining_secs = deadline_secs.saturating_sub(now_secs);
+        let deadline = Instant::now() + Duration::from_secs(remaining_secs);
+        RespValue::Integer(self.store.set_ttl(key, deadline) as i64)
+    }
+
+    fn pexpire_at(&self, key: &str, deadline_ms: u64) -> RespValue {
+        trace!("PEXPIREAT {} {}", key, deadline_ms);
+        // Fail PExpireAt commands where the deadline is in the past
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock is before Unix epoch")
+            .as_millis() as u64;
+        if deadline_ms <= now_ms {
+            self.store.delete(key);
+            return RespValue::Integer(0);
+        }
+
+        let remaining_ms = deadline_ms.saturating_sub(now_ms);
+        let deadline = Instant::now() + Duration::from_millis(remaining_ms);
+        RespValue::Integer(self.store.set_ttl(key, deadline) as i64)
+    }
+
+    fn select(&self, index: u8) -> RespValue {
+        if index != 0 {
+            return RespValue::SimpleError("ERR DB index is out of range".to_string());
+        }
+
+        RespValue::SimpleString("OK".to_string())
+    }
+
+    fn db_size(&self) -> RespValue {
+        RespValue::Integer(self.store.size() as i64)
+    }
+
+    fn flush_db(&self, mode: Option<&FlushMode>) -> RespValue {
+        // Prioritize command argument over config value
+        if let Some(mode) = mode {
+            match mode {
+                FlushMode::Sync => self.store.clear(),
+                FlushMode::Async => self.store.clear_async(),
             }
-
-            Command::GetDel { key } => {
-                let value = self.store.get_del(key);
-                trace!("GETDEL {}: {:?}", key, value);
-                RespValue::BulkString(value)
-            }
-
-            Command::Exists { keys } => {
-                let count: i64 = keys.iter().map(|k| self.store.exists(k) as i64).sum();
-                RespValue::Integer(count)
-            }
-
-            Command::Ttl { key } => self.resolve_expiry(key, "TTL", |r| r.as_secs() as i64),
-
-            Command::ExpireTime { key } => self.resolve_expiry(key, "EXPIRETIME", |r| {
-                let now_secs = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("system clock is before Unix epoch")
-                    .as_secs() as i64;
-                now_secs + r.as_secs() as i64
-            }),
-
-            Command::PExpireTime { key } => self.resolve_expiry(key, "PEXPIRETIME", |r| {
-                let now_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("system clock is before Unix epoch")
-                    .as_millis() as i64;
-                now_ms + r.as_millis() as i64
-            }),
-
-            Command::Persist { key } => {
-                let removed = self.store.persist(key);
-                RespValue::Integer(removed as i64)
-            }
-
-            Command::Expire { key, seconds } => {
-                trace!("EXPIRE {} {}", key, seconds);
-                match Instant::now().checked_add(Duration::from_secs(*seconds)) {
-                    // checked_add returns None on overflow — reject with an error
-                    None => RespValue::SimpleError(
-                        "ERR invalid expire time in 'expire' command".to_string(),
-                    ),
-                    Some(deadline) => RespValue::Integer(self.store.set_ttl(key, deadline) as i64),
-                }
-            }
-
-            Command::PExpire { key, milliseconds } => {
-                trace!("PEXPIRE {} {}", key, milliseconds);
-                match Instant::now().checked_add(Duration::from_millis(*milliseconds)) {
-                    // checked_add returns None on overflow — reject with an error
-                    None => RespValue::SimpleError(
-                        "ERR invalid expire time in 'expire' command".to_string(),
-                    ),
-                    Some(deadline) => RespValue::Integer(self.store.set_ttl(key, deadline) as i64),
-                }
-            }
-
-            Command::ExpireAt { key, deadline_secs } => {
-                trace!("EXPIREAT {} {}", key, deadline_secs);
-                // Fail ExpireAt commands where the deadline is in the past
-                let now_secs = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("system clock is before Unix epoch")
-                    .as_secs();
-                if *deadline_secs <= now_secs {
-                    self.store.delete(key);
-                    return RespValue::Integer(0);
-                }
-
-                let remaining_secs = deadline_secs.saturating_sub(now_secs);
-                let deadline = Instant::now() + Duration::from_secs(remaining_secs);
-                RespValue::Integer(self.store.set_ttl(key, deadline) as i64)
-            }
-
-            Command::PExpireAt { key, deadline_ms } => {
-                trace!("PEXPIREAT {} {}", key, deadline_ms);
-                // Fail PExpireAt commands where the deadline is in the past
-                let now_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("system clock is before Unix epoch")
-                    .as_millis() as u64;
-                if *deadline_ms <= now_ms {
-                    self.store.delete(key);
-                    return RespValue::Integer(0);
-                }
-
-                let remaining_ms = deadline_ms.saturating_sub(now_ms);
-                let deadline = Instant::now() + Duration::from_millis(remaining_ms);
-                RespValue::Integer(self.store.set_ttl(key, deadline) as i64)
-            }
-
-            Command::Select { index } => {
-                if *index != 0 {
-                    return RespValue::SimpleError("ERR DB index is out of range".to_string());
-                }
-
-                RespValue::SimpleString("OK".to_string())
-            }
-
-            Command::DbSize => RespValue::Integer(self.store.size() as i64),
-
-            Command::FlushDb { mode } => {
-                // Prioritize command argument over config value
-                if mode.is_some() {
-                    match mode.as_ref().unwrap() {
-                        FlushMode::Sync => self.store.clear(),
-                        FlushMode::Async => self.store.clear_async(),
-                    }
-                } else {
-                    match self.lazyfree_lazy_user_flush {
-                        true => self.store.clear_async(),
-                        false => self.store.clear(),
-                    }
-                }
-
-                RespValue::SimpleString("OK".to_string())
+        } else {
+            match self.lazyfree_lazy_user_flush {
+                true => self.store.clear_async(),
+                false => self.store.clear(),
             }
         }
+
+        RespValue::SimpleString("OK".to_string())
     }
 
     /// Looks up the expiry for `key` and maps the remaining [`Duration`] to an integer response
