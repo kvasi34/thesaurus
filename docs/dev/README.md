@@ -75,7 +75,7 @@ $3\r\nbar\r\n
 The result is a typed `Command` variant:
 
 ```rust
-Command::Set { key: "foo", value: "bar" }
+Command::Set { key: "foo", value: "bar", condition: None, expiry: None, get: false }
 ```
 
 ### 3. Dispatch and execution (`crates/thesaurus/src/handler.rs`, `crates/thesaurus/src/executor.rs`)
