@@ -1338,3 +1338,577 @@ async fn test_expireat_written_to_aof() {
         panic!("expected EXPIREAT array");
     }
 }
+
+/// Builds a SET command with key, value, and any additional option tokens.
+fn set_cmd(key: &str, value: &str, opts: &[&str]) -> Vec<u8> {
+    let mut parts = vec![
+        RespValue::BulkString(Some("SET".to_string())),
+        RespValue::BulkString(Some(key.to_string())),
+        RespValue::BulkString(Some(value.to_string())),
+    ];
+    for opt in opts {
+        parts.push(RespValue::BulkString(Some(opt.to_string())));
+    }
+    resp2::encode(&RespValue::Array(Some(parts)))
+}
+
+// --- NX ---
+
+#[tokio::test]
+async fn test_set_nx_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "bar", &["NX"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+}
+
+#[tokio::test]
+async fn test_set_nx_existing_key() {
+    let store = Store::new();
+    store.set("foo", "bar".to_string());
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "newval", &["NX"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
+async fn test_set_nx_existing_key_value_unchanged() {
+    let store = Store::new();
+    store.set("foo", "bar".to_string());
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "newval", &["NX"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*2\r\n$3\r\nGET\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(Some("bar".to_string())));
+}
+
+// --- XX ---
+
+#[tokio::test]
+async fn test_set_xx_existing_key() {
+    let store = Store::new();
+    store.set("foo", "bar".to_string());
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "newval", &["XX"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+}
+
+#[tokio::test]
+async fn test_set_xx_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "newval", &["XX"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
+async fn test_set_xx_missing_key_not_created() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "newval", &["XX"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*2\r\n$3\r\nGET\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+// --- GET ---
+
+#[tokio::test]
+async fn test_set_get_no_previous_value() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "bar", &["GET"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
+async fn test_set_get_with_previous_value() {
+    let store = Store::new();
+    store.set("foo", "bar".to_string());
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "newval", &["GET"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(Some("bar".to_string())));
+}
+
+// --- EX ---
+
+#[tokio::test]
+async fn test_set_ex() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "bar", &["EX", "60"]))
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+
+    client
+        .write_all(b"*2\r\n$3\r\nTTL\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    match response {
+        RespValue::Integer(secs) => assert!(secs > 0 && secs <= 60),
+        _ => panic!("expected integer TTL"),
+    }
+}
+
+// --- PX ---
+
+#[tokio::test]
+async fn test_set_px() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "bar", &["PX", "60000"]))
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+
+    client
+        .write_all(b"*2\r\n$3\r\nTTL\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    match response {
+        RespValue::Integer(secs) => assert!(secs > 0 && secs <= 60),
+        _ => panic!("expected integer TTL"),
+    }
+}
+
+// --- EXAT ---
+
+#[tokio::test]
+async fn test_set_exat() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    let deadline = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 60;
+    client
+        .write_all(&set_cmd("foo", "bar", &["EXAT", &deadline.to_string()]))
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+
+    client
+        .write_all(b"*2\r\n$3\r\nTTL\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    match response {
+        RespValue::Integer(secs) => assert!(secs > 0 && secs <= 60),
+        _ => panic!("expected integer TTL"),
+    }
+}
+
+// --- PXAT ---
+
+#[tokio::test]
+async fn test_set_pxat() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    let deadline = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+        + 60_000;
+    client
+        .write_all(&set_cmd("foo", "bar", &["PXAT", &deadline.to_string()]))
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+
+    client
+        .write_all(b"*2\r\n$3\r\nTTL\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    match response {
+        RespValue::Integer(secs) => assert!(secs > 0 && secs <= 60),
+        _ => panic!("expected integer TTL"),
+    }
+}
+
+// --- KEEPTTL ---
+
+#[tokio::test]
+async fn test_set_keepttl_preserves_ttl() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "bar", &["EX", "60"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&set_cmd("foo", "newval", &["KEEPTTL"]))
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+
+    client
+        .write_all(b"*2\r\n$3\r\nTTL\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    match response {
+        RespValue::Integer(secs) => assert!(secs > 0 && secs <= 60),
+        _ => panic!("expected integer TTL"),
+    }
+}
+
+#[tokio::test]
+async fn test_set_without_keepttl_clears_ttl() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "bar", &["EX", "60"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&set_cmd("foo", "newval", &[]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*2\r\n$3\r\nTTL\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(-1));
+}
+
+// --- IFEQ ---
+
+#[tokio::test]
+async fn test_set_ifeq_matching_value() {
+    let store = Store::new();
+    store.set("foo", "bar".to_string());
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "newval", &["IFEQ", "bar"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+}
+
+#[tokio::test]
+async fn test_set_ifeq_non_matching_value() {
+    let store = Store::new();
+    store.set("foo", "bar".to_string());
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "newval", &["IFEQ", "wrong"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
+async fn test_set_ifeq_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "newval", &["IFEQ", "bar"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+// --- IFNE ---
+
+#[tokio::test]
+async fn test_set_ifne_non_matching_value() {
+    let store = Store::new();
+    store.set("foo", "bar".to_string());
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "newval", &["IFNE", "other"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+}
+
+#[tokio::test]
+async fn test_set_ifne_matching_value() {
+    let store = Store::new();
+    store.set("foo", "bar".to_string());
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "newval", &["IFNE", "bar"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
+async fn test_set_ifne_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "newval", &["IFNE", "bar"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+// --- IFDEQ ---
+
+#[tokio::test]
+async fn test_set_ifdeq_matching_digest() {
+    use xxhash_rust::xxh3::xxh3_64;
+
+    let store = Store::new();
+    store.set("foo", "bar".to_string());
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    let digest = xxh3_64(b"bar").to_string();
+    client
+        .write_all(&set_cmd("foo", "newval", &["IFDEQ", &digest]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+}
+
+#[tokio::test]
+async fn test_set_ifdeq_non_matching_digest() {
+    let store = Store::new();
+    store.set("foo", "bar".to_string());
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "newval", &["IFDEQ", "0"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
+async fn test_set_ifdeq_missing_key() {
+    use xxhash_rust::xxh3::xxh3_64;
+
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    let digest = xxh3_64(b"bar").to_string();
+    client
+        .write_all(&set_cmd("foo", "newval", &["IFDEQ", &digest]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+// --- IFDNE ---
+
+#[tokio::test]
+async fn test_set_ifdne_non_matching_digest() {
+    let store = Store::new();
+    store.set("foo", "bar".to_string());
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "newval", &["IFDNE", "0"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+}
+
+#[tokio::test]
+async fn test_set_ifdne_matching_digest() {
+    use xxhash_rust::xxh3::xxh3_64;
+
+    let store = Store::new();
+    store.set("foo", "bar".to_string());
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    let digest = xxh3_64(b"bar").to_string();
+    client
+        .write_all(&set_cmd("foo", "newval", &["IFDNE", &digest]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
+async fn test_set_ifdne_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "newval", &["IFDNE", "0"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+// --- Combinations ---
+
+#[tokio::test]
+async fn test_set_nx_with_ex() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "bar", &["NX", "EX", "60"]))
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+
+    client
+        .write_all(b"*2\r\n$3\r\nTTL\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    match response {
+        RespValue::Integer(secs) => assert!(secs > 0 && secs <= 60),
+        _ => panic!("expected integer TTL"),
+    }
+}
+
+#[tokio::test]
+async fn test_set_xx_with_get() {
+    let store = Store::new();
+    store.set("foo", "bar".to_string());
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&set_cmd("foo", "newval", &["XX", "GET"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(Some("bar".to_string())));
+}

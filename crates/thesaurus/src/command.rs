@@ -26,6 +26,38 @@ pub enum FlushMode {
     Async,
 }
 
+/// Condition flag for the SET command. The flags in this group are mutually exclusive.
+#[derive(Debug, PartialEq)]
+pub enum SetCondition {
+    /// Only set if the key does not already exist.
+    NX,
+    /// Only set if the key already exists.
+    XX,
+    /// Only set if the current value equals the given string.
+    IfEq(String),
+    /// Only set if the current value does not equal the given string.
+    IfNe(String),
+    /// Only set if the XXH3 hash digest of the current value equals the given digest.
+    IfDeq(u64),
+    /// Only set if the XXH3 hash digest of the current value does not equal the given digest.
+    IfDne(u64),
+}
+
+/// Expiry option for the SET command. The options in this group are mutually exclusive.
+#[derive(Debug, PartialEq)]
+pub enum SetExpiry {
+    /// Set TTL in seconds.
+    Ex(u64),
+    /// Set TTL in milliseconds.
+    Px(u64),
+    /// Set expiry as a Unix timestamp in seconds.
+    ExAt(u64),
+    /// Set expiry as a Unix timestamp in milliseconds.
+    PxAt(u64),
+    /// Retain the existing TTL.
+    KeepTtl,
+}
+
 /// Command parsed from raw TCP client input.
 #[derive(Debug, PartialEq)]
 pub enum Command {
@@ -34,7 +66,14 @@ pub enum Command {
     /// Get the value for a key.
     Get { key: String },
     /// Set a key-value pair.
-    Set { key: String, value: String },
+    Set {
+        key: String,
+        value: String,
+        condition: Option<SetCondition>,
+        expiry: Option<SetExpiry>,
+        /// Return the previous value as part of the SET response.
+        get: bool,
+    },
     /// Delete a key-value pair.
     Delete { keys: Vec<String> },
     /// Get the value for a key and delete key-value pair.
@@ -181,7 +220,12 @@ impl Command {
 
     /// Helper function to parse the arguments of a SET command into a `Command::Set` struct.
     fn parse_set_command(args: &[RespValue]) -> Result<Self, HandlerError> {
-        check_arity(args, 3)?;
+        if args.len() < 3 {
+            return Err(HandlerError::WrongArity {
+                expected: 3,
+                got: args.len() as u8,
+            });
+        }
 
         let key = match &args[1] {
             RespValue::BulkString(Some(s)) => s.clone(),
@@ -192,7 +236,114 @@ impl Command {
             _ => unreachable!(),
         };
 
-        Ok(Command::Set { key, value })
+        // Parse arguments
+        let mut condition: Option<SetCondition> = None;
+        let mut expiry: Option<SetExpiry> = None;
+        let mut get = false;
+
+        // Helper closure to safely retrieve the next argument
+        let get_next_token = |args: &[RespValue], i: &mut usize| -> Result<String, HandlerError> {
+            *i += 1;
+            let next_token = args.get(*i);
+            match next_token {
+                Some(RespValue::BulkString(Some(s))) => Ok(s.clone()),
+                _ => Err(HandlerError::SyntaxError),
+            }
+        };
+
+        // Helper closure to check if the condition has already been defined
+        let guard_duplicate_condition =
+            |condition: &Option<SetCondition>| -> Result<_, HandlerError> {
+                if condition.is_some() {
+                    return Err(HandlerError::SyntaxError);
+                }
+
+                Ok(())
+            };
+
+        let mut i: usize = 3;
+        while i < args.len() {
+            let token = match &args[i] {
+                RespValue::BulkString(Some(s)) => s.as_str(),
+                _ => unreachable!(),
+            };
+
+            match token {
+                "NX" => {
+                    guard_duplicate_condition(&condition)?;
+
+                    condition = Some(SetCondition::NX);
+                }
+                "XX" => {
+                    guard_duplicate_condition(&condition)?;
+
+                    condition = Some(SetCondition::XX);
+                }
+                "IFEQ" => {
+                    guard_duplicate_condition(&condition)?;
+
+                    let next_token = get_next_token(args, &mut i)?;
+                    condition = Some(SetCondition::IfEq(next_token));
+                }
+                "IFNE" => {
+                    guard_duplicate_condition(&condition)?;
+
+                    let next_token = get_next_token(args, &mut i)?;
+                    condition = Some(SetCondition::IfNe(next_token));
+                }
+                "IFDEQ" | "IFDNE" => {
+                    guard_duplicate_condition(&condition)?;
+
+                    let next_token = get_next_token(args, &mut i)?;
+                    let n = next_token
+                        .parse::<u64>()
+                        .map_err(|_| HandlerError::NotAnInteger(next_token))?;
+                    condition = Some(match token {
+                        "IFDEQ" => SetCondition::IfDeq(n),
+                        _ => SetCondition::IfDne(n),
+                    });
+                }
+                "GET" => {
+                    get = true;
+                }
+                "EX" | "PX" | "EXAT" | "PXAT" => {
+                    if expiry.is_some() {
+                        return Err(HandlerError::SyntaxError);
+                    }
+
+                    let next_token = get_next_token(args, &mut i)?;
+                    let n = next_token
+                        .parse::<u64>()
+                        .map_err(|_| HandlerError::NotAnInteger(next_token))?;
+                    expiry = Some(match token {
+                        "EX" => SetExpiry::Ex(n),
+                        "PX" => SetExpiry::Px(n),
+                        "EXAT" => SetExpiry::ExAt(n),
+                        _ => SetExpiry::PxAt(n),
+                    });
+                }
+                "KEEPTTL" => {
+                    if expiry.is_some() {
+                        return Err(HandlerError::SyntaxError);
+                    }
+
+                    expiry = Some(SetExpiry::KeepTtl);
+                }
+                _ => {
+                    return Err(HandlerError::SyntaxError);
+                }
+            }
+
+            i += 1;
+        }
+
+        Ok(Command::Set {
+            key,
+            value,
+            condition,
+            expiry,
+            get,
+        })
     }
 
     /// Helper function to parse the arguments of commands that require one or more `keys` arguments into the `Command` struct.
@@ -387,9 +538,302 @@ mod tests {
             cmd.unwrap(),
             Command::Set {
                 key: "foo".to_string(),
-                value: "bar".to_string()
+                value: "bar".to_string(),
+                condition: None,
+                expiry: None,
+                get: false,
             }
         );
+    }
+
+    #[test]
+    fn test_from_resp2_set_with_nx() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SET", "foo", "bar", "NX"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Set {
+                key: "foo".to_string(),
+                value: "bar".to_string(),
+                condition: Some(SetCondition::NX),
+                expiry: None,
+                get: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_set_with_xx() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SET", "foo", "bar", "XX"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Set {
+                key: "foo".to_string(),
+                value: "bar".to_string(),
+                condition: Some(SetCondition::XX),
+                expiry: None,
+                get: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_set_with_ifeq() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&[
+            "SET", "foo", "bar", "IFEQ", "oldval",
+        ]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Set {
+                key: "foo".to_string(),
+                value: "bar".to_string(),
+                condition: Some(SetCondition::IfEq("oldval".to_string())),
+                expiry: None,
+                get: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_set_with_ifne() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&[
+            "SET", "foo", "bar", "IFNE", "oldval",
+        ]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Set {
+                key: "foo".to_string(),
+                value: "bar".to_string(),
+                condition: Some(SetCondition::IfNe("oldval".to_string())),
+                expiry: None,
+                get: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_set_with_ifdeq() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&[
+            "SET", "foo", "bar", "IFDEQ", "12345",
+        ]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Set {
+                key: "foo".to_string(),
+                value: "bar".to_string(),
+                condition: Some(SetCondition::IfDeq(12345)),
+                expiry: None,
+                get: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_set_with_ifdne() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&[
+            "SET", "foo", "bar", "IFDNE", "12345",
+        ]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Set {
+                key: "foo".to_string(),
+                value: "bar".to_string(),
+                condition: Some(SetCondition::IfDne(12345)),
+                expiry: None,
+                get: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_set_with_ex() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SET", "foo", "bar", "EX", "100"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Set {
+                key: "foo".to_string(),
+                value: "bar".to_string(),
+                condition: None,
+                expiry: Some(SetExpiry::Ex(100)),
+                get: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_set_with_px() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SET", "foo", "bar", "PX", "5000"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Set {
+                key: "foo".to_string(),
+                value: "bar".to_string(),
+                condition: None,
+                expiry: Some(SetExpiry::Px(5000)),
+                get: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_set_with_exat() {
+        // 9999999999 secs ≈ year 2286 — safely in the future for the lifetime of this test
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&[
+            "SET",
+            "foo",
+            "bar",
+            "EXAT",
+            "9999999999",
+        ]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Set {
+                key: "foo".to_string(),
+                value: "bar".to_string(),
+                condition: None,
+                expiry: Some(SetExpiry::ExAt(9999999999)),
+                get: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_set_with_pxat() {
+        // 9999999999999 ms ≈ year 2286 — safely in the future for the lifetime of this test
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&[
+            "SET",
+            "foo",
+            "bar",
+            "PXAT",
+            "9999999999999",
+        ]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Set {
+                key: "foo".to_string(),
+                value: "bar".to_string(),
+                condition: None,
+                expiry: Some(SetExpiry::PxAt(9999999999999)),
+                get: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_set_with_keepttl() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SET", "foo", "bar", "KEEPTTL"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Set {
+                key: "foo".to_string(),
+                value: "bar".to_string(),
+                condition: None,
+                expiry: Some(SetExpiry::KeepTtl),
+                get: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_set_with_get() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SET", "foo", "bar", "GET"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Set {
+                key: "foo".to_string(),
+                value: "bar".to_string(),
+                condition: None,
+                expiry: None,
+                get: true,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_set_nx_with_ex() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&[
+            "SET", "foo", "bar", "NX", "EX", "100",
+        ]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Set {
+                key: "foo".to_string(),
+                value: "bar".to_string(),
+                condition: Some(SetCondition::NX),
+                expiry: Some(SetExpiry::Ex(100)),
+                get: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_set_xx_with_get() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SET", "foo", "bar", "XX", "GET"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Set {
+                key: "foo".to_string(),
+                value: "bar".to_string(),
+                condition: Some(SetCondition::XX),
+                expiry: None,
+                get: true,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_set_ex_missing_value() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SET", "foo", "bar", "EX"]));
+        assert_eq!(cmd.err().unwrap(), HandlerError::SyntaxError);
+    }
+
+    #[test]
+    fn test_from_resp2_set_ex_not_an_integer() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&[
+            "SET",
+            "foo",
+            "bar",
+            "EX",
+            "notanumber",
+        ]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::NotAnInteger("notanumber".to_string())
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_set_ifdeq_not_an_integer() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&[
+            "SET",
+            "foo",
+            "bar",
+            "IFDEQ",
+            "notanumber",
+        ]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::NotAnInteger("notanumber".to_string())
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_set_unknown_option() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SET", "foo", "bar", "UNKNOWN"]));
+        assert_eq!(cmd.err().unwrap(), HandlerError::SyntaxError);
+    }
+
+    #[test]
+    fn test_from_resp2_set_duplicate_condition() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SET", "foo", "bar", "NX", "XX"]));
+        assert_eq!(cmd.err().unwrap(), HandlerError::SyntaxError);
+    }
+
+    #[test]
+    fn test_from_resp2_set_duplicate_expiry() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&[
+            "SET", "foo", "bar", "EX", "100", "PX", "5000",
+        ]));
+        assert_eq!(cmd.err().unwrap(), HandlerError::SyntaxError);
     }
 
     #[test]
