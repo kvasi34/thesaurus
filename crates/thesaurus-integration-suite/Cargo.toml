@@ -17,3 +17,4 @@ publish = false
 thesaurus = { path = "../thesaurus" }
 tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros"] }
 tempfile = "3"
+xxhash-rust = { version = "0.8.15", features = ["xxh3"] }

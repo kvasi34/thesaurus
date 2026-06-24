@@ -1,8 +1,11 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use log::trace;
+use xxhash_rust::xxh3::xxh3_64;
 
-use crate::command::{Command, FlushMode};
+use crate::command::SetCondition::{IfDeq, IfDne, IfEq, IfNe, NX, XX};
+use crate::command::SetExpiry::{Ex, ExAt, KeepTtl, Px, PxAt};
+use crate::command::{Command, FlushMode, SetCondition, SetExpiry};
 use crate::resp2::RespValue;
 use crate::store::Store;
 
@@ -37,7 +40,13 @@ impl Executor {
         match cmd {
             Command::Ping { message } => self.ping(message.as_deref()),
             Command::Get { key } => self.get(key),
-            Command::Set { key, value } => self.set(key, value),
+            Command::Set {
+                key,
+                value,
+                condition,
+                expiry,
+                get,
+            } => self.set(key, value, condition, expiry, *get),
             Command::Delete { keys } => self.delete(keys),
             Command::GetDel { key } => self.get_del(key),
             Command::Exists { keys } => self.exists(keys),
@@ -68,10 +77,87 @@ impl Executor {
         RespValue::BulkString(value)
     }
 
-    fn set(&self, key: &str, value: &str) -> RespValue {
+    fn set(
+        &self,
+        key: &str,
+        value: &str,
+        condition: &Option<SetCondition>,
+        expiry: &Option<SetExpiry>,
+        get: bool,
+    ) -> RespValue {
         trace!("SET {} = {}", key, value);
-        self.store.set(key, value.to_string());
-        RespValue::SimpleString("OK".to_string())
+        let prev = self.store.get(key);
+
+        // Handle SET command conditions
+        let condition_met = match condition {
+            None => true,
+            Some(NX) => prev.is_none(),
+            Some(XX) => prev.is_some(),
+            Some(IfEq(s)) => prev.as_deref().is_some_and(|v| v == s),
+            Some(IfNe(s)) => prev.as_deref().is_some_and(|v| v != s),
+            Some(IfDeq(u)) => prev.as_deref().is_some_and(|v| xxh3_64(v.as_bytes()) == *u),
+            Some(IfDne(u)) => prev.as_deref().is_some_and(|v| xxh3_64(v.as_bytes()) != *u),
+        };
+
+        if condition_met {
+            let prev_ttl = if matches!(expiry, Some(KeepTtl)) {
+                self.store.get_ttl(key)
+            } else {
+                None
+            };
+
+            self.store.set(key, value.to_string());
+
+            // Handle SET command expiry arguments
+            match expiry {
+                None => {} // TTL already cleared by store.set()
+                Some(Ex(secs)) => match Instant::now().checked_add(Duration::from_secs(*secs)) {
+                    None => {
+                        return RespValue::SimpleError(
+                            "ERR invalid expire time in 'set' command".to_string(),
+                        );
+                    }
+                    Some(deadline) => {
+                        self.store.set_ttl(key, deadline);
+                    }
+                },
+                Some(Px(millis)) => {
+                    match Instant::now().checked_add(Duration::from_millis(*millis)) {
+                        None => {
+                            return RespValue::SimpleError(
+                                "ERR invalid expire time in 'set' command".to_string(),
+                            );
+                        }
+                        Some(deadline) => {
+                            self.store.set_ttl(key, deadline);
+                        }
+                    }
+                }
+                Some(ExAt(deadline_secs)) => {
+                    self.store
+                        .set_ttl(key, Self::unix_secs_to_instant(*deadline_secs));
+                }
+                Some(PxAt(deadline_ms)) => {
+                    self.store
+                        .set_ttl(key, Self::unix_ms_to_instant(*deadline_ms));
+                }
+                Some(KeepTtl) => {
+                    if let Some(ttl) = prev_ttl {
+                        self.store.set_ttl(key, ttl);
+                    }
+                }
+            }
+        }
+
+        if get {
+            return RespValue::BulkString(prev);
+        }
+
+        if condition_met {
+            RespValue::SimpleString("OK".to_string())
+        } else {
+            RespValue::BulkString(None)
+        }
     }
 
     fn delete(&self, keys: &[String]) -> RespValue {
@@ -154,9 +240,10 @@ impl Executor {
             return RespValue::Integer(0);
         }
 
-        let remaining_secs = deadline_secs.saturating_sub(now_secs);
-        let deadline = Instant::now() + Duration::from_secs(remaining_secs);
-        RespValue::Integer(self.store.set_ttl(key, deadline) as i64)
+        RespValue::Integer(
+            self.store
+                .set_ttl(key, Self::unix_secs_to_instant(deadline_secs)) as i64,
+        )
     }
 
     fn pexpire_at(&self, key: &str, deadline_ms: u64) -> RespValue {
@@ -171,9 +258,10 @@ impl Executor {
             return RespValue::Integer(0);
         }
 
-        let remaining_ms = deadline_ms.saturating_sub(now_ms);
-        let deadline = Instant::now() + Duration::from_millis(remaining_ms);
-        RespValue::Integer(self.store.set_ttl(key, deadline) as i64)
+        RespValue::Integer(
+            self.store
+                .set_ttl(key, Self::unix_ms_to_instant(deadline_ms)) as i64,
+        )
     }
 
     fn select(&self, index: u8) -> RespValue {
@@ -203,6 +291,22 @@ impl Executor {
         }
 
         RespValue::SimpleString("OK".to_string())
+    }
+
+    fn unix_secs_to_instant(deadline_secs: u64) -> Instant {
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock is before Unix epoch")
+            .as_secs();
+        Instant::now() + Duration::from_secs(deadline_secs.saturating_sub(now_secs))
+    }
+
+    fn unix_ms_to_instant(deadline_ms: u64) -> Instant {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock is before Unix epoch")
+            .as_millis() as u64;
+        Instant::now() + Duration::from_millis(deadline_ms.saturating_sub(now_ms))
     }
 
     /// Looks up the expiry for `key` and maps the remaining [`Duration`] to an integer response
