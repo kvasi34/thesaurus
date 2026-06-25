@@ -58,6 +58,7 @@ impl Executor {
             Command::PExpire { key, milliseconds } => self.pexpire(key, *milliseconds),
             Command::ExpireAt { key, deadline_secs } => self.expire_at(key, *deadline_secs),
             Command::PExpireAt { key, deadline_ms } => self.pexpire_at(key, *deadline_ms),
+            Command::Digest { key } => self.digest(key),
             Command::Select { index } => self.select(*index),
             Command::DbSize => self.db_size(),
             Command::FlushDb { mode } => self.flush_db(mode.as_ref()),
@@ -95,8 +96,8 @@ impl Executor {
             Some(XX) => prev.is_some(),
             Some(IfEq(s)) => prev.as_deref().is_some_and(|v| v == s),
             Some(IfNe(s)) => prev.as_deref().is_some_and(|v| v != s),
-            Some(IfDeq(u)) => prev.as_deref().is_some_and(|v| xxh3_64(v.as_bytes()) == *u),
-            Some(IfDne(u)) => prev.as_deref().is_some_and(|v| xxh3_64(v.as_bytes()) != *u),
+            Some(IfDeq(u)) => prev.as_deref().is_some_and(|v| Self::digest_value(v) == *u),
+            Some(IfDne(u)) => prev.as_deref().is_some_and(|v| Self::digest_value(v) != *u),
         };
 
         if condition_met {
@@ -262,6 +263,17 @@ impl Executor {
             self.store
                 .set_ttl(key, Self::unix_ms_to_instant(deadline_ms)) as i64,
         )
+    }
+
+    fn digest(&self, key: &str) -> RespValue {
+        match self.store.get(key) {
+            Some(v) => RespValue::BulkString(Some(format!("{:016x}", Self::digest_value(&v)))),
+            None => RespValue::BulkString(None),
+        }
+    }
+
+    fn digest_value(v: &str) -> u64 {
+        xxh3_64(v.as_bytes())
     }
 
     fn select(&self, index: u8) -> RespValue {

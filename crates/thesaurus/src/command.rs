@@ -96,6 +96,9 @@ pub enum Command {
     ExpireAt { key: String, deadline_secs: u64 },
     /// Set a timeout for a key at an absolute Unix timestamp in milliseconds.
     PExpireAt { key: String, deadline_ms: u64 },
+    /// Get the hash digest for the value stored in the specified key as a hexadecimal string. A hash digest is a fixed-size
+    /// numerical representation of a string value, computed using the XXH3 hash algorithm. Can be used for efficient comparison operations.
+    Digest { key: String },
     /// No-op command; Thesaurus is a single-store database. Only accepts 0 as a valid index.
     Select { index: u8 },
     /// Returns the number of keys in the database.
@@ -164,6 +167,7 @@ impl Command {
             "PEXPIREAT" => Command::parse_expire_commands(args, |key, deadline_ms| {
                 Command::PExpireAt { key, deadline_ms }
             }),
+            "DIGEST" => Command::parse_key_command(args, |key| Command::Digest { key }),
             "SELECT" => Command::parse_select_command(args),
             "DBSIZE" => Command::parse_dbsize_command(args),
             "FLUSHDB" => Command::parse_flushdb_command(args),
@@ -295,8 +299,7 @@ impl Command {
                     guard_duplicate_condition(&condition)?;
 
                     let next_token = get_next_token(args, &mut i)?;
-                    let n = next_token
-                        .parse::<u64>()
+                    let n = u64::from_str_radix(&next_token, 16)
                         .map_err(|_| HandlerError::NotAnInteger(next_token))?;
                     condition = Some(match token {
                         "IFDEQ" => SetCondition::IfDeq(n),
@@ -613,14 +616,18 @@ mod tests {
     #[test]
     fn test_from_resp2_set_with_ifdeq() {
         let cmd = Command::from_resp2(&create_cmd_resp_msg(&[
-            "SET", "foo", "bar", "IFDEQ", "12345",
+            "SET",
+            "foo",
+            "bar",
+            "IFDEQ",
+            "000000000000002a",
         ]));
         assert_eq!(
             cmd.unwrap(),
             Command::Set {
                 key: "foo".to_string(),
                 value: "bar".to_string(),
-                condition: Some(SetCondition::IfDeq(12345)),
+                condition: Some(SetCondition::IfDeq(42)),
                 expiry: None,
                 get: false,
             }
@@ -630,14 +637,18 @@ mod tests {
     #[test]
     fn test_from_resp2_set_with_ifdne() {
         let cmd = Command::from_resp2(&create_cmd_resp_msg(&[
-            "SET", "foo", "bar", "IFDNE", "12345",
+            "SET",
+            "foo",
+            "bar",
+            "IFDNE",
+            "000000000000002a",
         ]));
         assert_eq!(
             cmd.unwrap(),
             Command::Set {
                 key: "foo".to_string(),
                 value: "bar".to_string(),
-                condition: Some(SetCondition::IfDne(12345)),
+                condition: Some(SetCondition::IfDne(42)),
                 expiry: None,
                 get: false,
             }
@@ -1042,6 +1053,17 @@ mod tests {
     fn test_from_resp2_select() {
         let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SELECT", "0"]));
         assert_eq!(cmd.unwrap(), Command::Select { index: 0 });
+    }
+
+    #[test]
+    fn test_from_resp2_digest() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["DIGEST", "foo"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Digest {
+                key: "foo".to_string()
+            }
+        )
     }
 
     #[test]
