@@ -10,6 +10,7 @@ use tokio::{
     io::{AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
 };
+use xxhash_rust::xxh3::xxh3_64;
 
 async fn start_handler() -> std::net::SocketAddr {
     start_handler_with_store(Store::new()).await
@@ -918,6 +919,40 @@ async fn test_pexpiretime_key_with_expiry() {
 }
 
 #[tokio::test]
+async fn test_digest() {
+    let store = Store::new();
+    store.set("foo", "bar".to_string());
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*2\r\n$6\r\nDIGEST\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::BulkString(Some(format!("{:016x}", xxh3_64(b"bar"))))
+    );
+}
+
+#[tokio::test]
+async fn test_digest_null() {
+    let addr = start_handler_with_store(Store::new()).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*2\r\n$6\r\nDIGEST\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
 async fn test_select_ok() {
     let addr = start_handler().await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1774,7 +1809,7 @@ async fn test_set_ifdeq_matching_digest() {
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
 
-    let digest = xxh3_64(b"bar").to_string();
+    let digest = format!("{:016x}", xxh3_64(b"bar"));
     client
         .write_all(&set_cmd("foo", "newval", &["IFDEQ", &digest]))
         .await
@@ -1808,7 +1843,7 @@ async fn test_set_ifdeq_missing_key() {
     let addr = start_handler().await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
 
-    let digest = xxh3_64(b"bar").to_string();
+    let digest = format!("{:016x}", xxh3_64(b"bar"));
     client
         .write_all(&set_cmd("foo", "newval", &["IFDEQ", &digest]))
         .await
@@ -1847,7 +1882,7 @@ async fn test_set_ifdne_matching_digest() {
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
 
-    let digest = xxh3_64(b"bar").to_string();
+    let digest = format!("{:016x}", xxh3_64(b"bar"));
     client
         .write_all(&set_cmd("foo", "newval", &["IFDNE", &digest]))
         .await

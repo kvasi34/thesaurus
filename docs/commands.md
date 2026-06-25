@@ -7,6 +7,7 @@
 | `SET`          | `SET key value [condition] [GET] [expiry]`     | `NX`, `XX`, `IFEQ`, `IFNE`, `IFDEQ`, `IFDNE`, `GET`, `EX`, `PX`, `EXAT`, `PXAT`, `KEEPTTL` |
 | `DEL`          | `DEL key [key …]`                              | —                                                              |
 | `GETDEL`       | `GETDEL key`                                   | —                                                              |
+| `DIGEST`       | `DIGEST key`                                   | —                                                              |
 | `EXISTS`       | `EXISTS key [key …]`                           | —                                                              |
 | `EXPIRE`       | `EXPIRE key seconds`                           |                                                                |
 | `PEXPIRE`      | `PEXPIRE key milliseconds`                     |                                                                |
