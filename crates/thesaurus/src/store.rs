@@ -5,6 +5,12 @@ use std::time::Instant;
 
 use rand::seq::IteratorRandom;
 
+/// Wrapper for `Store` data structures.
+#[derive(Clone, Debug, PartialEq)]
+pub enum StoreValue {
+    Str(String),
+}
+
 /// Shared in-memory key-value store.
 ///
 /// Internally wraps an `Arc<RwLock<HashMap>>` so it can be cheaply cloned
@@ -17,7 +23,7 @@ pub struct Store {
 
 #[derive(Clone, Debug)]
 struct StoreInner {
-    data: HashMap<String, String>,
+    data: HashMap<String, StoreValue>,
     expiry_index: HashMap<String, Instant>,
 }
 
@@ -39,7 +45,7 @@ impl Store {
     }
 
     /// Returns the value for `key`, or `None` if the key does not exist.
-    pub fn get(&self, key: &str) -> Option<String> {
+    pub fn get(&self, key: &str) -> Option<StoreValue> {
         let guard = self.inner.read().unwrap();
         let expiry_entry = guard.expiry_index.get(key);
         if expiry_entry.is_none_or(|v| Instant::now() < *v) {
@@ -50,7 +56,7 @@ impl Store {
     }
 
     /// Inserts or overwrites `key` with `value`.
-    pub fn set(&self, key: &str, value: String) {
+    pub fn set(&self, key: &str, value: StoreValue) {
         let mut guard = self.inner.write().unwrap();
         guard.expiry_index.remove(key);
         guard.data.insert(key.to_string(), value);
@@ -63,8 +69,8 @@ impl Store {
         guard.data.remove(key).is_some()
     }
 
-    /// Get the value for `key` and immediately delete the `key`.
-    pub fn get_del(&self, key: &str) -> Option<String> {
+    /// Gets the value for `key` and immediately delete the `key`.
+    pub fn get_del(&self, key: &str) -> Option<StoreValue> {
         let mut guard = self.inner.write().unwrap();
         let expiry_entry = guard.expiry_index.get(key);
         if expiry_entry.is_none_or(|v| Instant::now() < *v) {
@@ -177,7 +183,7 @@ mod tests {
     fn test_get_returns_none_for_expired_key() {
         use std::time::Duration;
         let store = Store::new();
-        store.set("foo", "bar".to_string());
+        store.set("foo", StoreValue::Str("bar".to_string()));
         store.set_ttl("foo", Instant::now() - Duration::from_secs(1));
         assert_eq!(store.get("foo"), None);
     }
@@ -186,25 +192,25 @@ mod tests {
     fn test_get_returns_value_for_key_with_future_expiry() {
         use std::time::Duration;
         let store = Store::new();
-        store.set("foo", "bar".to_string());
+        store.set("foo", StoreValue::Str("bar".to_string()));
         store.set_ttl("foo", Instant::now() + Duration::from_secs(60));
-        assert_eq!(store.get("foo"), Some("bar".to_string()));
+        assert_eq!(store.get("foo"), Some(StoreValue::Str("bar".to_string())));
     }
 
     // set
     #[test]
     fn test_set_and_get() {
         let store = Store::new();
-        store.set("foo", "bar".to_string());
-        assert_eq!(store.get("foo"), Some("bar".to_string()));
+        store.set("foo", StoreValue::Str("bar".to_string()));
+        assert_eq!(store.get("foo"), Some(StoreValue::Str("bar".to_string())));
     }
 
     #[test]
     fn test_set_overwrites_existing_key() {
         let store = Store::new();
-        store.set("foo", "bar".to_string());
-        store.set("foo", "baz".to_string());
-        assert_eq!(store.get("foo"), Some("baz".to_string()));
+        store.set("foo", StoreValue::Str("bar".to_string()));
+        store.set("foo", StoreValue::Str("baz".to_string()));
+        assert_eq!(store.get("foo"), Some(StoreValue::Str("baz".to_string())));
     }
 
     #[test]
@@ -213,11 +219,11 @@ mod tests {
         let store_b = store_a.clone();
         let store_c = store_a.clone();
 
-        store_a.set("foo", "bar".to_string());
-        assert_eq!(store_b.get("foo"), Some("bar".to_string()));
+        store_a.set("foo", StoreValue::Str("bar".to_string()));
+        assert_eq!(store_b.get("foo"), Some(StoreValue::Str("bar".to_string())));
 
-        store_b.set("foo", "baz".to_string());
-        assert_eq!(store_c.get("foo"), Some("baz".to_string()));
+        store_b.set("foo", StoreValue::Str("baz".to_string()));
+        assert_eq!(store_c.get("foo"), Some(StoreValue::Str("baz".to_string())));
 
         store_c.delete("foo");
         assert_eq!(store_a.get("foo"), None);
@@ -227,7 +233,7 @@ mod tests {
     #[test]
     fn test_delete_existing_key() {
         let store = Store::new();
-        store.set("foo", "bar".to_string());
+        store.set("foo", StoreValue::Str("bar".to_string()));
         assert!(store.delete("foo"));
         assert_eq!(store.get("foo"), None);
     }
@@ -242,8 +248,11 @@ mod tests {
     #[test]
     fn test_get_del_existing_key() {
         let store = Store::new();
-        store.set("foo", "bar".to_string());
-        assert_eq!(store.get_del("foo"), Some("bar".to_string()));
+        store.set("foo", StoreValue::Str("bar".to_string()));
+        assert_eq!(
+            store.get_del("foo"),
+            Some(StoreValue::Str("bar".to_string()))
+        );
     }
 
     #[test]
@@ -255,7 +264,7 @@ mod tests {
     #[test]
     fn test_get_del_removes_key() {
         let store = Store::new();
-        store.set("foo", "bar".to_string());
+        store.set("foo", StoreValue::Str("bar".to_string()));
         store.get_del("foo");
         assert_eq!(store.get("foo"), None);
     }
@@ -264,7 +273,7 @@ mod tests {
     fn test_get_del_removes_expiry() {
         use std::time::Duration;
         let store = Store::new();
-        store.set("foo", "bar".to_string());
+        store.set("foo", StoreValue::Str("bar".to_string()));
         store.set_ttl("foo", Instant::now() + Duration::from_secs(60));
         store.get_del("foo");
         assert_eq!(store.get_ttl("foo"), None);
@@ -274,7 +283,7 @@ mod tests {
     fn test_get_del_expired_key() {
         use std::time::Duration;
         let store = Store::new();
-        store.set("foo", "bar".to_string());
+        store.set("foo", StoreValue::Str("bar".to_string()));
         store.set_ttl("foo", Instant::now() - Duration::from_secs(1));
         assert_eq!(store.get_del("foo"), None);
     }
@@ -283,7 +292,7 @@ mod tests {
     #[test]
     fn test_exists_present_key() {
         let store = Store::new();
-        store.set("foo", "bar".to_string());
+        store.set("foo", StoreValue::Str("bar".to_string()));
         assert!(store.exists("foo"));
     }
 
@@ -296,7 +305,7 @@ mod tests {
     #[test]
     fn test_exists_deleted_key() {
         let store = Store::new();
-        store.set("foo", "bar".to_string());
+        store.set("foo", StoreValue::Str("bar".to_string()));
         store.delete("foo");
         assert!(!store.exists("foo"));
     }
@@ -305,7 +314,7 @@ mod tests {
     fn test_exists_expired_key() {
         use std::time::Duration;
         let store = Store::new();
-        store.set("foo", "bar".to_string());
+        store.set("foo", StoreValue::Str("bar".to_string()));
         store.set_ttl("foo", Instant::now() - Duration::from_secs(1));
         assert!(!store.exists("foo"));
     }
@@ -314,7 +323,7 @@ mod tests {
     #[test]
     fn test_get_ttl_no_expiry() {
         let store = Store::new();
-        store.set("foo", "bar".to_string());
+        store.set("foo", StoreValue::Str("bar".to_string()));
         assert_eq!(store.get_ttl("foo"), None);
     }
 
@@ -322,7 +331,7 @@ mod tests {
     fn test_get_ttl_with_expiry() {
         use std::time::Duration;
         let store = Store::new();
-        store.set("foo", "bar".to_string());
+        store.set("foo", StoreValue::Str("bar".to_string()));
         let expiry = Instant::now() + Duration::from_secs(60);
         store.set_ttl("foo", expiry);
         assert_eq!(store.get_ttl("foo"), Some(expiry));
@@ -333,7 +342,7 @@ mod tests {
     fn test_set_ttl_existing_key() {
         use std::time::Duration;
         let store = Store::new();
-        store.set("foo", "bar".to_string());
+        store.set("foo", StoreValue::Str("bar".to_string()));
         let expiry = Instant::now() + Duration::from_secs(60);
         assert!(store.set_ttl("foo", expiry));
     }
@@ -350,7 +359,7 @@ mod tests {
     fn test_set_ttl_overwrites_existing_ttl() {
         use std::time::Duration;
         let store = Store::new();
-        store.set("foo", "bar".to_string());
+        store.set("foo", StoreValue::Str("bar".to_string()));
         let first_expiry = Instant::now() + Duration::from_secs(60);
         let second_expiry = Instant::now() + Duration::from_secs(120);
         store.set_ttl("foo", first_expiry);
@@ -363,7 +372,7 @@ mod tests {
     fn test_persist_key_with_ttl() {
         use std::time::Duration;
         let store = Store::new();
-        store.set("foo", "bar".to_string());
+        store.set("foo", StoreValue::Str("bar".to_string()));
         store.set_ttl("foo", Instant::now() + Duration::from_secs(60));
         assert!(store.persist("foo"));
     }
@@ -372,7 +381,7 @@ mod tests {
     fn test_persist_removes_ttl() {
         use std::time::Duration;
         let store = Store::new();
-        store.set("foo", "bar".to_string());
+        store.set("foo", StoreValue::Str("bar".to_string()));
         store.set_ttl("foo", Instant::now() + Duration::from_secs(60));
         store.persist("foo");
         assert_eq!(store.get_ttl("foo"), None);
@@ -381,7 +390,7 @@ mod tests {
     #[test]
     fn test_persist_key_without_ttl() {
         let store = Store::new();
-        store.set("foo", "bar".to_string());
+        store.set("foo", StoreValue::Str("bar".to_string()));
         assert!(!store.persist("foo"));
     }
 
@@ -395,7 +404,7 @@ mod tests {
     fn test_delete_bulk() {
         let store = Store::new();
         for i in 0..10u8 {
-            store.set(&format!("k{}", i), format!("v{}", i));
+            store.set(&format!("k{}", i), StoreValue::Str(format!("v{}", i)));
         }
 
         let keys: Vec<String> = (1..=5).map(|i| format!("k{}", i)).collect();
@@ -413,7 +422,7 @@ mod tests {
     fn test_delete_bulk_removes_expiry() {
         use std::time::Duration;
         let store = Store::new();
-        store.set("foo", "bar".to_string());
+        store.set("foo", StoreValue::Str("bar".to_string()));
         store.set_ttl("foo", Instant::now() + Duration::from_secs(60));
 
         store.delete_bulk(&vec!["foo".to_string()]);
@@ -425,7 +434,7 @@ mod tests {
     #[test]
     fn test_delete_bulk_skips_missing_keys() {
         let store = Store::new();
-        store.set("foo", "bar".to_string());
+        store.set("foo", StoreValue::Str("bar".to_string()));
 
         store.delete_bulk(&vec!["foo".to_string(), "missing".to_string()]);
 

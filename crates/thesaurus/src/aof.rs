@@ -196,7 +196,11 @@ mod tests {
     use super::*;
     use std::fs;
 
-    use crate::{executor::Executor, resp2::RespValue, store::Store};
+    use crate::{
+        executor::Executor,
+        resp2::RespValue,
+        store::{Store, StoreValue},
+    };
 
     // Writes a sequence of commands to a file as RESP2 bytes.
     fn write_aof(path: &Path, commands: &[&[&str]]) {
@@ -293,7 +297,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(store.get("foo"), None);
-        assert_eq!(store.get("baz"), Some("qux".to_string()));
+        assert_eq!(store.get("baz"), Some(StoreValue::Str("qux".to_string())));
     }
 
     #[test]
@@ -324,7 +328,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(store.get("foo"), Some("bar".to_string()));
+        assert_eq!(store.get("foo"), Some(StoreValue::Str("bar".to_string())));
         assert!(store.get_ttl("foo").is_some());
     }
 
@@ -377,7 +381,10 @@ mod tests {
 
         assert_eq!(store.get("foo"), None);
         assert_eq!(store.get("baz"), None);
-        assert_eq!(store.get("new_key"), Some("value".to_string()));
+        assert_eq!(
+            store.get("new_key"),
+            Some(StoreValue::Str("value".to_string()))
+        );
     }
 
     #[test]
