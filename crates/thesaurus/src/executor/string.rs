@@ -6,18 +6,17 @@ use xxhash_rust::xxh3::xxh3_64;
 use crate::command::SetCondition::{self, IfDeq, IfDne, IfEq, IfNe, NX, XX};
 use crate::command::SetExpiry::{self, Ex, ExAt, KeepTtl, Px, PxAt};
 use crate::resp2::RespValue::{self, BulkString};
-use crate::store::StoreValue;
 
 use super::{Executor, WRONGTYPE_ERROR};
 
 impl Executor {
     pub(super) fn get(&self, key: &str) -> RespValue {
-        let value = self.store.get(key);
+        let value = self.store.get_string(key);
         trace!("GET {}: {:?}", key, value);
         match value {
-            Some(StoreValue::Str(s)) => BulkString(Some(s)),
-            Some(_) => RespValue::SimpleError(WRONGTYPE_ERROR.to_string()),
-            None => BulkString(None),
+            Ok(Some(s)) => BulkString(Some(s)),
+            Ok(None) => BulkString(None),
+            Err(_) => RespValue::SimpleError(WRONGTYPE_ERROR.to_string()),
         }
     }
 
@@ -30,10 +29,9 @@ impl Executor {
         get: bool,
     ) -> RespValue {
         trace!("SET {} = {}", key, value);
-        let prev = match self.store.get(key) {
-            Some(StoreValue::Str(s)) => Some(s),
-            Some(_) => return RespValue::SimpleError(WRONGTYPE_ERROR.to_string()),
-            None => None,
+        let prev = match self.store.get_string(key) {
+            Ok(s) => s,
+            Err(_) => return RespValue::SimpleError(WRONGTYPE_ERROR.to_string()),
         };
 
         // Handle SET command conditions
@@ -54,7 +52,7 @@ impl Executor {
                 None
             };
 
-            self.store.set(key, StoreValue::Str(value.to_string()));
+            self.store.set_string(key, value);
 
             // Handle SET command expiry arguments
             match expiry {
@@ -109,22 +107,19 @@ impl Executor {
     }
 
     pub(super) fn get_del(&self, key: &str) -> RespValue {
-        let value = match self.store.get_del(key) {
-            Some(StoreValue::Str(s)) => Some(s),
-            Some(_) => return RespValue::SimpleError(WRONGTYPE_ERROR.to_string()),
-            None => None,
+        let value = match self.store.get_del_string(key) {
+            Ok(s) => s,
+            Err(_) => return RespValue::SimpleError(WRONGTYPE_ERROR.to_string()),
         };
         trace!("GETDEL {}: {:?}", key, value);
         RespValue::BulkString(value)
     }
 
     pub(super) fn digest(&self, key: &str) -> RespValue {
-        match self.store.get(key) {
-            Some(StoreValue::Str(s)) => {
-                RespValue::BulkString(Some(format!("{:016x}", Self::digest_value(&s))))
-            }
-            Some(_) => RespValue::SimpleError(WRONGTYPE_ERROR.to_string()),
-            None => RespValue::BulkString(None),
+        match self.store.get_string(key) {
+            Ok(Some(s)) => RespValue::BulkString(Some(format!("{:016x}", Self::digest_value(&s)))),
+            Ok(None) => RespValue::BulkString(None),
+            Err(_) => RespValue::SimpleError(WRONGTYPE_ERROR.to_string()),
         }
     }
 

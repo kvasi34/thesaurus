@@ -1,3 +1,5 @@
+mod string;
+
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use log::trace;
@@ -5,8 +7,6 @@ use log::trace;
 use crate::command::{Command, FlushMode};
 use crate::resp2::RespValue;
 use crate::store::Store;
-
-mod string;
 
 const WRONGTYPE_ERROR: &str = "WRONGTYPE Operation against a key holding the wrong kind of value";
 

@@ -1,3 +1,5 @@
+mod string;
+
 use std::collections::HashMap;
 use std::mem;
 use std::sync::{Arc, RwLock};
@@ -5,9 +7,13 @@ use std::time::Instant;
 
 use rand::seq::IteratorRandom;
 
+/// Returned when an operation is attempted on a key that holds the wrong data type.
+#[derive(Debug, PartialEq)]
+pub struct WrongType;
+
 /// Wrapper for `Store` data structures.
 #[derive(Clone, Debug, PartialEq)]
-pub enum StoreValue {
+enum StoreValue {
     Str(String),
 }
 
@@ -45,7 +51,7 @@ impl Store {
     }
 
     /// Returns the value for `key`, or `None` if the key does not exist.
-    pub fn get(&self, key: &str) -> Option<StoreValue> {
+    fn get(&self, key: &str) -> Option<StoreValue> {
         let guard = self.inner.read().unwrap();
         let expiry_entry = guard.expiry_index.get(key);
         if expiry_entry.is_none_or(|v| Instant::now() < *v) {
@@ -56,7 +62,7 @@ impl Store {
     }
 
     /// Inserts or overwrites `key` with `value`.
-    pub fn set(&self, key: &str, value: StoreValue) {
+    fn set(&self, key: &str, value: StoreValue) {
         let mut guard = self.inner.write().unwrap();
         guard.expiry_index.remove(key);
         guard.data.insert(key.to_string(), value);
@@ -70,7 +76,7 @@ impl Store {
     }
 
     /// Gets the value for `key` and immediately delete the `key`.
-    pub fn get_del(&self, key: &str) -> Option<StoreValue> {
+    fn get_del(&self, key: &str) -> Option<StoreValue> {
         let mut guard = self.inner.write().unwrap();
         let expiry_entry = guard.expiry_index.get(key);
         if expiry_entry.is_none_or(|v| Instant::now() < *v) {

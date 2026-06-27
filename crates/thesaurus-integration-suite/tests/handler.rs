@@ -4,7 +4,7 @@ use thesaurus::{
     handler::Handler,
     resp2,
     resp2::RespValue,
-    store::{Store, StoreValue},
+    store::Store,
 };
 use tokio::{
     io::{AsyncWriteExt, BufReader},
@@ -233,7 +233,7 @@ async fn test_getdel_removes_key() {
 async fn test_getdel_expired_key() {
     use std::time::{Duration, Instant};
     let store = Store::new();
-    store.set("foo", StoreValue::Str("bar".to_string()));
+    store.set_string("foo", "bar");
     store.set_ttl("foo", Instant::now() - Duration::from_secs(1));
 
     let addr = start_handler_with_store(store).await;
@@ -251,7 +251,7 @@ async fn test_getdel_expired_key() {
 #[tokio::test]
 async fn test_exists_existing_key() {
     let store = Store::new();
-    store.set("key1", StoreValue::Str("Hello".to_string()));
+    store.set_string("key1", "Hello");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -282,8 +282,8 @@ async fn test_exists_missing_key() {
 #[tokio::test]
 async fn test_exists_multiple_key() {
     let store = Store::new();
-    store.set("key1", StoreValue::Str("Hello".to_string()));
-    store.set("key2", StoreValue::Str("World".to_string()));
+    store.set_string("key1", "Hello");
+    store.set_string("key2", "World");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -433,7 +433,7 @@ async fn test_ttl_key_with_expiry() {
 async fn test_ttl_expired_key() {
     use std::time::{Duration, Instant};
     let store = Store::new();
-    store.set("foo", StoreValue::Str("bar".to_string()));
+    store.set_string("foo", "bar");
     store.set_ttl("foo", Instant::now() - Duration::from_secs(1));
 
     let addr = start_handler_with_store(store).await;
@@ -921,7 +921,7 @@ async fn test_pexpiretime_key_with_expiry() {
 #[tokio::test]
 async fn test_digest() {
     let store = Store::new();
-    store.set("foo", StoreValue::Str("bar".to_string()));
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1019,7 +1019,7 @@ async fn test_dbsize() {
 async fn test_flushdb() {
     use std::time::{Duration, Instant};
     let store = Store::new();
-    store.set("foo", StoreValue::Str("bar".to_string()));
+    store.set_string("foo", "bar");
     store.set_ttl("foo", Instant::now() - Duration::from_secs(1));
 
     let addr = start_handler_with_store(store.clone()).await;
@@ -1034,8 +1034,8 @@ async fn test_flushdb() {
 #[tokio::test]
 async fn test_flushdb_sync() {
     let store = Store::new();
-    store.set("foo", StoreValue::Str("bar".to_string()));
-    store.set("baz", StoreValue::Str("qux".to_string()));
+    store.set_string("foo", "bar");
+    store.set_string("baz", "qux");
 
     let addr = start_handler_with_store(store.clone()).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1052,8 +1052,8 @@ async fn test_flushdb_sync() {
 #[tokio::test]
 async fn test_flushdb_async() {
     let store = Store::new();
-    store.set("foo", StoreValue::Str("bar".to_string()));
-    store.set("baz", StoreValue::Str("qux".to_string()));
+    store.set_string("foo", "bar");
+    store.set_string("baz", "qux");
 
     let addr = start_handler_with_store(store.clone()).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1070,8 +1070,8 @@ async fn test_flushdb_async() {
 #[tokio::test]
 async fn test_flushdb_default_is_sync_when_lazyfree_off() {
     let store = Store::new();
-    store.set("foo", StoreValue::Str("bar".to_string()));
-    store.set("baz", StoreValue::Str("qux".to_string()));
+    store.set_string("foo", "bar");
+    store.set_string("baz", "qux");
 
     let addr = start_handler_with_store_and_lazyfree(store.clone(), false).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1085,8 +1085,8 @@ async fn test_flushdb_default_is_sync_when_lazyfree_off() {
 #[tokio::test]
 async fn test_flushdb_default_is_async_when_lazyfree_on() {
     let store = Store::new();
-    store.set("foo", StoreValue::Str("bar".to_string()));
-    store.set("baz", StoreValue::Str("qux".to_string()));
+    store.set_string("foo", "bar");
+    store.set_string("baz", "qux");
 
     let addr = start_handler_with_store_and_lazyfree(store.clone(), true).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1097,18 +1097,15 @@ async fn test_flushdb_default_is_async_when_lazyfree_on() {
 
     // OK guarantees the swap is done. Insert into the new (empty) data structure
     // while the background drop task may still be pending.
-    store.set("new_key", StoreValue::Str("value".to_string()));
+    store.set_string("new_key", "value");
 
     // Yield to give the background drop task a chance to run — it holds only
     // the old data and must not affect new_key.
     tokio::task::yield_now().await;
 
-    assert_eq!(
-        store.get("new_key"),
-        Some(StoreValue::Str("value".to_string()))
-    );
-    assert_eq!(store.get("foo"), None);
-    assert_eq!(store.get("baz"), None);
+    assert_eq!(store.get_string("new_key"), Ok(Some("value".to_string())));
+    assert_eq!(store.get_string("foo"), Ok(None));
+    assert_eq!(store.get_string("baz"), Ok(None));
 }
 
 #[tokio::test]
@@ -1409,7 +1406,7 @@ async fn test_set_nx_missing_key() {
 #[tokio::test]
 async fn test_set_nx_existing_key() {
     let store = Store::new();
-    store.set("foo", StoreValue::Str("bar".to_string()));
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1426,7 +1423,7 @@ async fn test_set_nx_existing_key() {
 #[tokio::test]
 async fn test_set_nx_existing_key_value_unchanged() {
     let store = Store::new();
-    store.set("foo", StoreValue::Str("bar".to_string()));
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1450,7 +1447,7 @@ async fn test_set_nx_existing_key_value_unchanged() {
 #[tokio::test]
 async fn test_set_xx_existing_key() {
     let store = Store::new();
-    store.set("foo", StoreValue::Str("bar".to_string()));
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1516,7 +1513,7 @@ async fn test_set_get_no_previous_value() {
 #[tokio::test]
 async fn test_set_get_with_previous_value() {
     let store = Store::new();
-    store.set("foo", StoreValue::Str("bar".to_string()));
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1705,7 +1702,7 @@ async fn test_set_without_keepttl_clears_ttl() {
 #[tokio::test]
 async fn test_set_ifeq_matching_value() {
     let store = Store::new();
-    store.set("foo", StoreValue::Str("bar".to_string()));
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1722,7 +1719,7 @@ async fn test_set_ifeq_matching_value() {
 #[tokio::test]
 async fn test_set_ifeq_non_matching_value() {
     let store = Store::new();
-    store.set("foo", StoreValue::Str("bar".to_string()));
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1755,7 +1752,7 @@ async fn test_set_ifeq_missing_key() {
 #[tokio::test]
 async fn test_set_ifne_non_matching_value() {
     let store = Store::new();
-    store.set("foo", StoreValue::Str("bar".to_string()));
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1772,7 +1769,7 @@ async fn test_set_ifne_non_matching_value() {
 #[tokio::test]
 async fn test_set_ifne_matching_value() {
     let store = Store::new();
-    store.set("foo", StoreValue::Str("bar".to_string()));
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1807,7 +1804,7 @@ async fn test_set_ifdeq_matching_digest() {
     use xxhash_rust::xxh3::xxh3_64;
 
     let store = Store::new();
-    store.set("foo", StoreValue::Str("bar".to_string()));
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1825,7 +1822,7 @@ async fn test_set_ifdeq_matching_digest() {
 #[tokio::test]
 async fn test_set_ifdeq_non_matching_digest() {
     let store = Store::new();
-    store.set("foo", StoreValue::Str("bar".to_string()));
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1861,7 +1858,7 @@ async fn test_set_ifdeq_missing_key() {
 #[tokio::test]
 async fn test_set_ifdne_non_matching_digest() {
     let store = Store::new();
-    store.set("foo", StoreValue::Str("bar".to_string()));
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1880,7 +1877,7 @@ async fn test_set_ifdne_matching_digest() {
     use xxhash_rust::xxh3::xxh3_64;
 
     let store = Store::new();
-    store.set("foo", StoreValue::Str("bar".to_string()));
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1937,7 +1934,7 @@ async fn test_set_nx_with_ex() {
 #[tokio::test]
 async fn test_set_xx_with_get() {
     let store = Store::new();
-    store.set("foo", StoreValue::Str("bar".to_string()));
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
