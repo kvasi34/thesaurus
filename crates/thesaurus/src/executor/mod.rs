@@ -1,3 +1,4 @@
+mod list;
 mod string;
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -51,6 +52,10 @@ impl Executor {
             Command::Delete { keys } => self.delete(keys),
             Command::GetDel { key } => self.get_del(key),
             Command::Exists { keys } => self.exists(keys),
+            Command::LPush { key, elements } => self.lpush(key, elements),
+            Command::RPush { key, elements } => self.rpush(key, elements),
+            Command::LPushX { key, elements } => self.lpushx(key, elements),
+            Command::RPushX { key, elements } => self.rpushx(key, elements),
             Command::Ttl { key } => self.ttl(key),
             Command::ExpireTime { key } => self.expire_time(key),
             Command::PExpireTime { key } => self.pexpire_time(key),

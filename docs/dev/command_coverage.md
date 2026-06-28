@@ -89,16 +89,16 @@ Implementation status of every Redis 8.8 command, grouped by data type.
 | `LMPOP` | Returns and removes elements from one of multiple lists | | | |
 | `LPOP` | Returns and removes the first element(s) of a list | | ✓ | |
 | `LPOS` | Returns the index of matching elements in a list | | | |
-| `LPUSH` | Prepends one or more elements to a list | | ✓ | |
-| `LPUSHX` | Prepends elements to a list only when the list exists | | ✓ | |
+| `LPUSH` | Prepends one or more elements to a list | ✓ | | |
+| `LPUSHX` | Prepends elements to a list only when the list exists | ✓ | | |
 | `LRANGE` | Returns a range of elements from a list | | ✓ | |
 | `LREM` | Removes occurrences of an element from a list | | | |
 | `LSET` | Sets the value of an element in a list by its index | | ✓ | |
 | `LTRIM` | Trims a list to the specified range | | | |
 | `RPOP` | Returns and removes the last element(s) of a list | | ✓ | |
 | `RPOPLPUSH` | Pops from the tail of one list and pushes to the head of another | | | |
-| `RPUSH` | Appends one or more elements to a list | | ✓ | |
-| `RPUSHX` | Appends elements to a list only when the list exists | | ✓ | |
+| `RPUSH` | Appends one or more elements to a list | ✓ | | |
+| `RPUSHX` | Appends elements to a list only when the list exists | ✓ | | |
 
 ## Sets
 

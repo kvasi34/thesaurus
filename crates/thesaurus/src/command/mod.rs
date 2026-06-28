@@ -1,7 +1,9 @@
+mod list;
+mod string;
+
 use crate::errors::HandlerError;
 use crate::resp2::RespValue;
 
-mod string;
 pub use string::{SetCondition, SetExpiry};
 
 /// Server startup configuration parsed from CLI arguments and environment variables.
@@ -51,6 +53,14 @@ pub enum Command {
     GetDel { key: String },
     /// Returns if key(s) exists.
     Exists { keys: Vec<String> },
+    /// Prepend one or more elements to a list, creating the key if it does not exist.
+    LPush { key: String, elements: Vec<String> },
+    /// Append one or more elements to a list, creating the key if it does not exist.
+    RPush { key: String, elements: Vec<String> },
+    /// Prepend one or more elements to a list, only if the key already exists and holds a list.
+    LPushX { key: String, elements: Vec<String> },
+    /// Append one or more elements to a list, only if the key already exists and holds a list.
+    RPushX { key: String, elements: Vec<String> },
     /// Get the remaining time to live of a key that has a timeout.
     Ttl { key: String },
     /// Returns the absolute Unix timestamp (since January 1, 1970) in seconds at which the given key will expire.
@@ -121,6 +131,18 @@ impl Command {
             "DEL" => Command::parse_keys_command(args, |keys| Command::Delete { keys }),
             "GETDEL" => Command::parse_key_command(args, |key| Command::GetDel { key }),
             "EXISTS" => Command::parse_keys_command(args, |keys| Command::Exists { keys }),
+            "LPUSH" => {
+                Command::parse_push_command(args, |key, elements| Command::LPush { key, elements })
+            }
+            "RPUSH" => {
+                Command::parse_push_command(args, |key, elements| Command::RPush { key, elements })
+            }
+            "LPUSHX" => {
+                Command::parse_push_command(args, |key, elements| Command::LPushX { key, elements })
+            }
+            "RPUSHX" => {
+                Command::parse_push_command(args, |key, elements| Command::RPushX { key, elements })
+            }
             "TTL" => Command::parse_key_command(args, |key| Command::Ttl { key }),
             "EXPIRETIME" => Command::parse_key_command(args, |key| Command::ExpireTime { key }),
             "PEXPIRETIME" => Command::parse_key_command(args, |key| Command::PExpireTime { key }),

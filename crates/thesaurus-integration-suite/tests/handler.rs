@@ -1908,6 +1908,272 @@ async fn test_set_ifdne_missing_key() {
 
 // --- Combinations ---
 
+/// Builds a push command (LPUSH / RPUSH / LPUSHX / RPUSHX) with one or more elements.
+fn push_cmd(cmd: &str, key: &str, elements: &[&str]) -> Vec<u8> {
+    let mut parts = vec![
+        RespValue::BulkString(Some(cmd.to_string())),
+        RespValue::BulkString(Some(key.to_string())),
+    ];
+    for el in elements {
+        parts.push(RespValue::BulkString(Some(el.to_string())));
+    }
+    resp2::encode(&RespValue::Array(Some(parts)))
+}
+
+const WRONGTYPE_ERROR: &str = "WRONGTYPE Operation against a key holding the wrong kind of value";
+
+// --- LPUSH ---
+
+#[tokio::test]
+async fn test_lpush_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("LPUSH", "list", &["a"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(1));
+}
+
+#[tokio::test]
+async fn test_lpush_accumulates_length() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("LPUSH", "list", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&push_cmd("LPUSH", "list", &["b"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(2));
+}
+
+#[tokio::test]
+async fn test_lpush_multiple_elements() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("LPUSH", "list", &["a", "b", "c"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(3));
+}
+
+#[tokio::test]
+async fn test_lpush_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("LPUSH", "key", &["a"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+// --- RPUSH ---
+
+#[tokio::test]
+async fn test_rpush_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["a"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(1));
+}
+
+#[tokio::test]
+async fn test_rpush_accumulates_length() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["b"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(2));
+}
+
+#[tokio::test]
+async fn test_rpush_multiple_elements() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["a", "b", "c"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(3));
+}
+
+#[tokio::test]
+async fn test_rpush_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "key", &["a"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+// --- LPUSHX ---
+
+#[tokio::test]
+async fn test_lpushx_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("LPUSHX", "list", &["a"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+}
+
+#[tokio::test]
+async fn test_lpushx_existing_list() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("LPUSH", "list", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&push_cmd("LPUSHX", "list", &["b"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(2));
+}
+
+#[tokio::test]
+async fn test_lpushx_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("LPUSHX", "key", &["a"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+// --- RPUSHX ---
+
+#[tokio::test]
+async fn test_rpushx_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSHX", "list", &["a"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+}
+
+#[tokio::test]
+async fn test_rpushx_existing_list() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&push_cmd("RPUSHX", "list", &["b"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(2));
+}
+
+#[tokio::test]
+async fn test_rpushx_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSHX", "key", &["a"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
 #[tokio::test]
 async fn test_set_nx_with_ex() {
     let addr = start_handler().await;

@@ -1,6 +1,7 @@
+mod list;
 mod string;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::mem;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -15,6 +16,7 @@ pub struct WrongType;
 #[derive(Clone, Debug, PartialEq)]
 enum StoreValue {
     Str(String),
+    List(VecDeque<String>),
 }
 
 /// Shared in-memory key-value store.
