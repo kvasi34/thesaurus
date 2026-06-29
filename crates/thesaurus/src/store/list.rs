@@ -99,6 +99,17 @@ impl Store {
     pub fn rpop(&self, key: &str, count: u64) -> Result<Option<Vec<String>>, WrongType> {
         self.pop_inner(key, count, VecDeque::pop_back)
     }
+
+    /// Returns the number of elements in the list at `key`. Returns `Ok(0)` if the key does not
+    /// exist. Returns `Err(WrongType)` if the key holds a non-list value.
+    pub fn llen(&self, key: &str) -> Result<usize, WrongType> {
+        let guard = self.inner.read().unwrap();
+        match guard.data.get(key) {
+            None => Ok(0),
+            Some(StoreValue::List(l)) => Ok(l.len()),
+            Some(_) => Err(WrongType),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -309,5 +320,28 @@ mod tests {
         let store = Store::new();
         store.set("key", StoreValue::Str("val".to_string()));
         assert_eq!(store.rpop("key", 1), Err(WrongType));
+    }
+
+    // llen
+    #[test]
+    fn test_llen_returns_zero_on_missing_key() {
+        let store = Store::new();
+        assert_eq!(store.llen("missing"), Ok(0));
+    }
+
+    #[test]
+    fn test_llen_returns_length_of_list() {
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.rpush("key", "b".to_string()).unwrap();
+        store.rpush("key", "c".to_string()).unwrap();
+        assert_eq!(store.llen("key"), Ok(3));
+    }
+
+    #[test]
+    fn test_llen_returns_wrongtype_on_non_list_key() {
+        let store = Store::new();
+        store.set("key", StoreValue::Str("val".to_string()));
+        assert_eq!(store.llen("key"), Err(WrongType));
     }
 }

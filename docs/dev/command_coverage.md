@@ -84,7 +84,7 @@ Implementation status of every Redis 8.8 command, grouped by data type.
 | `BRPOPLPUSH` | Pops from one list and pushes to another; blocks if empty | | | |
 | `LINDEX` | Returns an element from a list by its index | | ✓ | |
 | `LINSERT` | Inserts an element before or after a pivot value in a list | | | |
-| `LLEN` | Returns the length of a list | | ✓ | |
+| `LLEN` | Returns the length of a list | ✓ | | |
 | `LMOVE` | Pops an element from one list and pushes it to another atomically | | | |
 | `LMPOP` | Returns and removes elements from one of multiple lists | | | |
 | `LPOP` | Returns and removes the first element(s) of a list | ✓ | | |

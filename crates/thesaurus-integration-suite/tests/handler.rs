@@ -2402,6 +2402,73 @@ async fn test_rpop_wrongtype() {
     );
 }
 
+// --- LLEN ---
+
+#[tokio::test]
+async fn test_llen_missing_key_returns_zero() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*2\r\n$4\r\nLLEN\r\n$6\r\nmylist\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+}
+
+#[tokio::test]
+async fn test_llen_returns_list_length() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*2\r\n$4\r\nLLEN\r\n$6\r\nmylist\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(3));
+}
+
+#[tokio::test]
+async fn test_llen_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*2\r\n$4\r\nLLEN\r\n$3\r\nkey\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+#[tokio::test]
+async fn test_llen_wrong_arity() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client.write_all(b"*1\r\n$4\r\nLLEN\r\n").await.unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert!(matches!(response, RespValue::SimpleError(_)));
+}
+
 #[tokio::test]
 async fn test_set_nx_with_ex() {
     let addr = start_handler().await;

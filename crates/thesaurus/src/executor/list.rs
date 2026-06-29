@@ -82,6 +82,15 @@ impl Executor {
     pub(super) fn rpop(&self, key: &str, count: Option<u64>) -> RespValue {
         Self::pop_inner(&self.store, key, count, Store::rpop)
     }
+
+    /// Handles LLEN: returns the number of elements in the list at `key`. Returns 0 if the key
+    /// does not exist. Returns a WRONGTYPE error if the key holds a non-list value.
+    pub(super) fn llen(&self, key: &str) -> RespValue {
+        match self.store.llen(key) {
+            Ok(n) => RespValue::Integer(n as i64),
+            Err(_) => RespValue::SimpleError(WRONGTYPE_ERROR.to_string()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -271,5 +280,26 @@ mod tests {
         let ex = executor();
         ex.store.set_string("key", "val");
         assert!(matches!(ex.rpop("key", None), RespValue::SimpleError(_)));
+    }
+
+    // llen
+    #[test]
+    fn test_llen_returns_zero_on_missing_key() {
+        let ex = executor();
+        assert_eq!(ex.llen("missing"), RespValue::Integer(0));
+    }
+
+    #[test]
+    fn test_llen_returns_length_of_list() {
+        let ex = executor();
+        ex.rpush("key", &els(&["a", "b", "c"]));
+        assert_eq!(ex.llen("key"), RespValue::Integer(3));
+    }
+
+    #[test]
+    fn test_llen_returns_wrongtype_on_non_list_key() {
+        let ex = executor();
+        ex.store.set_string("key", "val");
+        assert!(matches!(ex.llen("key"), RespValue::SimpleError(_)));
     }
 }

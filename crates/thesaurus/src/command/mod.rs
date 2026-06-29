@@ -65,6 +65,8 @@ pub enum Command {
     LPop { key: String, count: Option<u64> },
     /// Removes and returns the last elements of the list stored at key.
     RPop { key: String, count: Option<u64> },
+    /// Returns the length of the list stored at key.
+    LLen { key: String },
     /// Get the remaining time to live of a key that has a timeout.
     Ttl { key: String },
     /// Returns the absolute Unix timestamp (since January 1, 1970) in seconds at which the given key will expire.
@@ -149,6 +151,7 @@ impl Command {
             }
             "LPOP" => Command::parse_pop_command(args, |key, count| Command::LPop { key, count }),
             "RPOP" => Command::parse_pop_command(args, |key, count| Command::RPop { key, count }),
+            "LLEN" => Command::parse_key_command(args, |key| Command::LLen { key }),
             "TTL" => Command::parse_key_command(args, |key| Command::Ttl { key }),
             "EXPIRETIME" => Command::parse_key_command(args, |key| Command::ExpireTime { key }),
             "PEXPIRETIME" => Command::parse_key_command(args, |key| Command::PExpireTime { key }),
@@ -950,6 +953,29 @@ mod tests {
                 key: "foo".to_string()
             }
         )
+    }
+
+    #[test]
+    fn test_from_resp2_llen() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LLEN", "mylist"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::LLen {
+                key: "mylist".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_llen_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LLEN"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 2,
+                got: 1
+            }
+        );
     }
 
     #[test]
