@@ -49,6 +49,56 @@ impl Store {
     pub fn rpushx(&self, key: &str, element: String) -> Result<usize, WrongType> {
         self.push_inner(key, element, false, VecDeque::push_back)
     }
+
+    /// Helper method. Pops up to `count` elements from the list at `key` using `pop_fn` for
+    /// direction. Removes the key when the list becomes empty. Returns `Ok(None)` if the key does
+    /// not exist, `Ok(Some(elements))` with the popped elements otherwise. Returns
+    /// `Err(WrongType)` if the key holds a non-list value.
+    fn pop_inner(
+        &self,
+        key: &str,
+        count: u64,
+        pop_fn: impl Fn(&mut VecDeque<String>) -> Option<String>,
+    ) -> Result<Option<Vec<String>>, WrongType> {
+        let mut elements: Vec<String> = Vec::with_capacity(count as usize);
+        let mut guard = self.inner.write().unwrap();
+
+        // Ensure that the key exists and stores a `StoreValue::List` value
+        let list = match guard.data.get_mut(key) {
+            Some(StoreValue::List(l)) => l,
+            Some(_) => return Err(WrongType),
+            None => return Ok(None),
+        };
+
+        for _ in 0..count {
+            match pop_fn(list) {
+                Some(s) => elements.push(s),
+                None => break,
+            }
+        }
+
+        // Delete the key if the list is now empty
+        let is_empty = list.is_empty();
+        if is_empty {
+            guard.data.remove(key);
+        }
+
+        Ok(Some(elements))
+    }
+
+    /// Removes and returns up to `count` elements from the front of the list at `key`. Returns
+    /// `Ok(None)` if the key does not exist. Removes the key when the list becomes empty. Returns
+    /// `Err(WrongType)` if the key holds a non-list value.
+    pub fn lpop(&self, key: &str, count: u64) -> Result<Option<Vec<String>>, WrongType> {
+        self.pop_inner(key, count, VecDeque::pop_front)
+    }
+
+    /// Removes and returns up to `count` elements from the back of the list at `key`. Returns
+    /// `Ok(None)` if the key does not exist. Removes the key when the list becomes empty. Returns
+    /// `Err(WrongType)` if the key holds a non-list value.
+    pub fn rpop(&self, key: &str, count: u64) -> Result<Option<Vec<String>>, WrongType> {
+        self.pop_inner(key, count, VecDeque::pop_back)
+    }
 }
 
 #[cfg(test)]
@@ -175,5 +225,89 @@ mod tests {
         let store = Store::new();
         store.set("key", StoreValue::Str("val".to_string()));
         assert_eq!(store.rpushx("key", "a".to_string()), Err(WrongType));
+    }
+
+    // lpop
+    #[test]
+    fn test_lpop_returns_none_on_missing_key() {
+        let store = Store::new();
+        assert_eq!(store.lpop("key", 1), Ok(None));
+    }
+
+    #[test]
+    fn test_lpop_pops_from_front() {
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.rpush("key", "b".to_string()).unwrap();
+        assert_eq!(store.lpop("key", 1), Ok(Some(vec!["a".to_string()])));
+    }
+
+    #[test]
+    fn test_lpop_pops_multiple_elements() {
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.rpush("key", "b".to_string()).unwrap();
+        store.rpush("key", "c".to_string()).unwrap();
+        assert_eq!(
+            store.lpop("key", 2),
+            Ok(Some(vec!["a".to_string(), "b".to_string()]))
+        );
+    }
+
+    #[test]
+    fn test_lpop_removes_key_when_list_is_exhausted() {
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.lpop("key", 1).unwrap();
+        assert!(!store.exists("key"));
+    }
+
+    #[test]
+    fn test_lpop_returns_wrongtype_on_non_list_key() {
+        let store = Store::new();
+        store.set("key", StoreValue::Str("val".to_string()));
+        assert_eq!(store.lpop("key", 1), Err(WrongType));
+    }
+
+    // rpop
+    #[test]
+    fn test_rpop_returns_none_on_missing_key() {
+        let store = Store::new();
+        assert_eq!(store.rpop("key", 1), Ok(None));
+    }
+
+    #[test]
+    fn test_rpop_pops_from_back() {
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.rpush("key", "b".to_string()).unwrap();
+        assert_eq!(store.rpop("key", 1), Ok(Some(vec!["b".to_string()])));
+    }
+
+    #[test]
+    fn test_rpop_pops_multiple_elements() {
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.rpush("key", "b".to_string()).unwrap();
+        store.rpush("key", "c".to_string()).unwrap();
+        assert_eq!(
+            store.rpop("key", 2),
+            Ok(Some(vec!["c".to_string(), "b".to_string()]))
+        );
+    }
+
+    #[test]
+    fn test_rpop_removes_key_when_list_is_exhausted() {
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.rpop("key", 1).unwrap();
+        assert!(!store.exists("key"));
+    }
+
+    #[test]
+    fn test_rpop_returns_wrongtype_on_non_list_key() {
+        let store = Store::new();
+        store.set("key", StoreValue::Str("val".to_string()));
+        assert_eq!(store.rpop("key", 1), Err(WrongType));
     }
 }

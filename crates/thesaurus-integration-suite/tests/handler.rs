@@ -2174,6 +2174,234 @@ async fn test_rpushx_wrongtype() {
     );
 }
 
+/// Builds a pop command (LPOP / RPOP) with an optional count.
+fn pop_cmd(cmd: &str, key: &str, count: Option<u64>) -> Vec<u8> {
+    let mut parts = vec![
+        RespValue::BulkString(Some(cmd.to_string())),
+        RespValue::BulkString(Some(key.to_string())),
+    ];
+    if let Some(n) = count {
+        parts.push(RespValue::BulkString(Some(n.to_string())));
+    }
+    resp2::encode(&RespValue::Array(Some(parts)))
+}
+
+// --- LPOP ---
+
+#[tokio::test]
+async fn test_lpop_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&pop_cmd("LPOP", "list", None))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
+async fn test_lpop_without_count_returns_bulk_string() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["a", "b"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&pop_cmd("LPOP", "list", None))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(Some("a".to_string())));
+}
+
+#[tokio::test]
+async fn test_lpop_with_count_returns_array() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&pop_cmd("LPOP", "list", Some(2)))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("a".to_string())),
+            RespValue::BulkString(Some("b".to_string())),
+        ]))
+    );
+}
+
+#[tokio::test]
+async fn test_lpop_removes_key_when_list_exhausted() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&pop_cmd("LPOP", "list", None))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&pop_cmd("LPOP", "list", None))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
+async fn test_lpop_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&pop_cmd("LPOP", "key", None))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+// --- RPOP ---
+
+#[tokio::test]
+async fn test_rpop_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&pop_cmd("RPOP", "list", None))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
+async fn test_rpop_without_count_returns_bulk_string() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["a", "b"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&pop_cmd("RPOP", "list", None))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(Some("b".to_string())));
+}
+
+#[tokio::test]
+async fn test_rpop_with_count_returns_array() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&pop_cmd("RPOP", "list", Some(2)))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("c".to_string())),
+            RespValue::BulkString(Some("b".to_string())),
+        ]))
+    );
+}
+
+#[tokio::test]
+async fn test_rpop_removes_key_when_list_exhausted() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&pop_cmd("RPOP", "list", None))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&pop_cmd("RPOP", "list", None))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
+async fn test_rpop_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&pop_cmd("RPOP", "key", None))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
 #[tokio::test]
 async fn test_set_nx_with_ex() {
     let addr = start_handler().await;

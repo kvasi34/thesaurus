@@ -56,6 +56,8 @@ impl Executor {
             Command::RPush { key, elements } => self.rpush(key, elements),
             Command::LPushX { key, elements } => self.lpushx(key, elements),
             Command::RPushX { key, elements } => self.rpushx(key, elements),
+            Command::LPop { key, count } => self.lpop(key, *count),
+            Command::RPop { key, count } => self.rpop(key, *count),
             Command::Ttl { key } => self.ttl(key),
             Command::ExpireTime { key } => self.expire_time(key),
             Command::PExpireTime { key } => self.pexpire_time(key),

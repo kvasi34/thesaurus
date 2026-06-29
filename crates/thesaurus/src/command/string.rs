@@ -38,12 +38,7 @@ pub enum SetExpiry {
 impl Command {
     /// Helper function to parse the arguments of a SET command into a `Command::Set` struct.
     pub(super) fn parse_set_command(args: &[RespValue]) -> Result<Self, HandlerError> {
-        if args.len() < 3 {
-            return Err(HandlerError::WrongArity {
-                expected: 3,
-                got: args.len() as u8,
-            });
-        }
+        super::check_min_arity(args, 3)?;
 
         let key = match &args[1] {
             RespValue::BulkString(Some(s)) => s.clone(),

@@ -61,6 +61,10 @@ pub enum Command {
     LPushX { key: String, elements: Vec<String> },
     /// Append one or more elements to a list, only if the key already exists and holds a list.
     RPushX { key: String, elements: Vec<String> },
+    /// Removes and returns the first elements of the list stored at key.
+    LPop { key: String, count: Option<u64> },
+    /// Removes and returns the last elements of the list stored at key.
+    RPop { key: String, count: Option<u64> },
     /// Get the remaining time to live of a key that has a timeout.
     Ttl { key: String },
     /// Returns the absolute Unix timestamp (since January 1, 1970) in seconds at which the given key will expire.
@@ -143,6 +147,8 @@ impl Command {
             "RPUSHX" => {
                 Command::parse_push_command(args, |key, elements| Command::RPushX { key, elements })
             }
+            "LPOP" => Command::parse_pop_command(args, |key, count| Command::LPop { key, count }),
+            "RPOP" => Command::parse_pop_command(args, |key, count| Command::RPop { key, count }),
             "TTL" => Command::parse_key_command(args, |key| Command::Ttl { key }),
             "EXPIRETIME" => Command::parse_key_command(args, |key| Command::ExpireTime { key }),
             "PEXPIRETIME" => Command::parse_key_command(args, |key| Command::PExpireTime { key }),
@@ -175,6 +181,12 @@ impl Command {
             Command::Set { .. }
                 | Command::Delete { .. }
                 | Command::GetDel { .. }
+                | Command::LPush { .. }
+                | Command::RPush { .. }
+                | Command::LPushX { .. }
+                | Command::RPushX { .. }
+                | Command::LPop { .. }
+                | Command::RPop { .. }
                 | Command::Persist { .. }
                 | Command::Expire { .. }
                 | Command::PExpire { .. }
@@ -220,12 +232,7 @@ impl Command {
         args: &[RespValue],
         make_cmd: fn(Vec<String>) -> Command,
     ) -> Result<Self, HandlerError> {
-        if args.len() < 2 {
-            return Err(HandlerError::WrongArity {
-                expected: 2,
-                got: args.len() as u8,
-            });
-        }
+        check_min_arity(args, 2)?;
 
         let mut keys: Vec<String> = Vec::new();
         for arg in args.iter().skip(1) {
@@ -318,6 +325,19 @@ fn check_arity(args: &[RespValue], expected: usize) -> Result<(), HandlerError> 
             got: args.len() as u8,
         });
     }
+
+    Ok(())
+}
+
+/// Helper function to ensure that at least `min_expected` arguments were given.
+pub(super) fn check_min_arity(args: &[RespValue], min_expected: usize) -> Result<(), HandlerError> {
+    if args.len() < min_expected {
+        return Err(HandlerError::WrongArity {
+            expected: min_expected as u8,
+            got: args.len() as u8,
+        });
+    }
+
     Ok(())
 }
 
