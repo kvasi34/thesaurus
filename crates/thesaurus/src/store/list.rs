@@ -14,8 +14,11 @@ impl Store {
         push_fn: impl Fn(&mut VecDeque<String>, String),
     ) -> Result<usize, WrongType> {
         let mut guard = self.inner.write().unwrap();
-        match guard.data.get_mut(key) {
+        match guard.get_mut(key) {
             None if create_if_missing => {
+                // Remove any stale expiry entry so the newly-created list is not immediately
+                // considered expired. This is a no-op when the key was genuinely absent.
+                guard.expiry_index.remove(key);
                 guard
                     .data
                     .insert(key.to_string(), StoreValue::List(VecDeque::from([element])));
@@ -64,7 +67,7 @@ impl Store {
         let mut guard = self.inner.write().unwrap();
 
         // Ensure that the key exists and stores a `StoreValue::List` value
-        let list = match guard.data.get_mut(key) {
+        let list = match guard.get_mut(key) {
             Some(StoreValue::List(l)) => l,
             Some(_) => return Err(WrongType),
             None => return Ok(None),
@@ -104,7 +107,7 @@ impl Store {
     /// exist. Returns `Err(WrongType)` if the key holds a non-list value.
     pub fn llen(&self, key: &str) -> Result<usize, WrongType> {
         let guard = self.inner.read().unwrap();
-        match guard.data.get(key) {
+        match guard.get(key) {
             None => Ok(0),
             Some(StoreValue::List(l)) => Ok(l.len()),
             Some(_) => Err(WrongType),
@@ -343,5 +346,71 @@ mod tests {
         let store = Store::new();
         store.set("key", StoreValue::Str("val".to_string()));
         assert_eq!(store.llen("key"), Err(WrongType));
+    }
+
+    // expiry
+    #[test]
+    fn test_llen_returns_zero_on_expired_key() {
+        use std::time::{Duration, Instant};
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.set_ttl("key", Instant::now() - Duration::from_secs(1));
+        assert_eq!(store.llen("key"), Ok(0));
+    }
+
+    #[test]
+    fn test_lpop_returns_none_on_expired_key() {
+        use std::time::{Duration, Instant};
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.set_ttl("key", Instant::now() - Duration::from_secs(1));
+        assert_eq!(store.lpop("key", 1), Ok(None));
+    }
+
+    #[test]
+    fn test_rpop_returns_none_on_expired_key() {
+        use std::time::{Duration, Instant};
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.set_ttl("key", Instant::now() - Duration::from_secs(1));
+        assert_eq!(store.rpop("key", 1), Ok(None));
+    }
+
+    #[test]
+    fn test_lpush_creates_fresh_list_on_expired_key() {
+        use std::time::{Duration, Instant};
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.set_ttl("key", Instant::now() - Duration::from_secs(1));
+        assert_eq!(store.lpush("key", "b".to_string()), Ok(1));
+        assert_eq!(store.get_ttl("key"), None);
+    }
+
+    #[test]
+    fn test_rpush_creates_fresh_list_on_expired_key() {
+        use std::time::{Duration, Instant};
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.set_ttl("key", Instant::now() - Duration::from_secs(1));
+        assert_eq!(store.rpush("key", "b".to_string()), Ok(1));
+        assert_eq!(store.get_ttl("key"), None);
+    }
+
+    #[test]
+    fn test_lpushx_returns_zero_on_expired_key() {
+        use std::time::{Duration, Instant};
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.set_ttl("key", Instant::now() - Duration::from_secs(1));
+        assert_eq!(store.lpushx("key", "b".to_string()), Ok(0));
+    }
+
+    #[test]
+    fn test_rpushx_returns_zero_on_expired_key() {
+        use std::time::{Duration, Instant};
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.set_ttl("key", Instant::now() - Duration::from_secs(1));
+        assert_eq!(store.rpushx("key", "b".to_string()), Ok(0));
     }
 }

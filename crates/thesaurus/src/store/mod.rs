@@ -35,6 +35,36 @@ struct StoreInner {
     expiry_index: HashMap<String, Instant>,
 }
 
+impl StoreInner {
+    /// Returns a reference to the value for `key`, or `None` if the key does not exist or has
+    /// expired.
+    fn get(&self, key: &str) -> Option<&StoreValue> {
+        if self
+            .expiry_index
+            .get(key)
+            .is_some_and(|v| Instant::now() >= *v)
+        {
+            return None;
+        }
+
+        self.data.get(key)
+    }
+
+    /// Returns a mutable reference to the value for `key`, or `None` if the key does not exist or
+    /// has expired.
+    fn get_mut(&mut self, key: &str) -> Option<&mut StoreValue> {
+        if self
+            .expiry_index
+            .get(key)
+            .is_some_and(|v| Instant::now() >= *v)
+        {
+            return None;
+        }
+
+        self.data.get_mut(key)
+    }
+}
+
 impl Default for Store {
     fn default() -> Self {
         Self::new()
