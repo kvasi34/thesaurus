@@ -292,8 +292,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(store.get("foo"), None);
-        assert_eq!(store.get("baz"), Some("qux".to_string()));
+        assert_eq!(store.get_string("foo"), Ok(None));
+        assert_eq!(store.get_string("baz"), Ok(Some("qux".to_string())));
     }
 
     #[test]
@@ -324,7 +324,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(store.get("foo"), Some("bar".to_string()));
+        assert_eq!(store.get_string("foo"), Ok(Some("bar".to_string())));
         assert!(store.get_ttl("foo").is_some());
     }
 
@@ -349,7 +349,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(store.get("foo"), None);
+        assert_eq!(store.get_string("foo"), Ok(None));
     }
 
     #[test]
@@ -375,9 +375,9 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(store.get("foo"), None);
-        assert_eq!(store.get("baz"), None);
-        assert_eq!(store.get("new_key"), Some("value".to_string()));
+        assert_eq!(store.get_string("foo"), Ok(None));
+        assert_eq!(store.get_string("baz"), Ok(None));
+        assert_eq!(store.get_string("new_key"), Ok(Some("value".to_string())));
     }
 
     #[test]

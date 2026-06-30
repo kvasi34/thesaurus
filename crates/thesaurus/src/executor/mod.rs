@@ -1,13 +1,15 @@
+mod list;
+mod string;
+
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use log::trace;
-use xxhash_rust::xxh3::xxh3_64;
 
-use crate::command::SetCondition::{IfDeq, IfDne, IfEq, IfNe, NX, XX};
-use crate::command::SetExpiry::{Ex, ExAt, KeepTtl, Px, PxAt};
-use crate::command::{Command, FlushMode, SetCondition, SetExpiry};
+use crate::command::{Command, FlushMode};
 use crate::resp2::RespValue;
 use crate::store::Store;
+
+const WRONGTYPE_ERROR: &str = "WRONGTYPE Operation against a key holding the wrong kind of value";
 
 /// Bridges [`Command`] to [`Store`]: the single place where commands are
 /// applied to in-memory state.
@@ -50,6 +52,14 @@ impl Executor {
             Command::Delete { keys } => self.delete(keys),
             Command::GetDel { key } => self.get_del(key),
             Command::Exists { keys } => self.exists(keys),
+            Command::LPush { key, elements } => self.lpush(key, elements),
+            Command::RPush { key, elements } => self.rpush(key, elements),
+            Command::LPushX { key, elements } => self.lpushx(key, elements),
+            Command::RPushX { key, elements } => self.rpushx(key, elements),
+            Command::LPop { key, count } => self.lpop(key, *count),
+            Command::RPop { key, count } => self.rpop(key, *count),
+            Command::LLen { key } => self.llen(key),
+            Command::LIndex { key, index } => self.lindex(key, *index),
             Command::Ttl { key } => self.ttl(key),
             Command::ExpireTime { key } => self.expire_time(key),
             Command::PExpireTime { key } => self.pexpire_time(key),
@@ -72,105 +82,10 @@ impl Executor {
         }
     }
 
-    fn get(&self, key: &str) -> RespValue {
-        let value = self.store.get(key);
-        trace!("GET {}: {:?}", key, value);
-        RespValue::BulkString(value)
-    }
-
-    fn set(
-        &self,
-        key: &str,
-        value: &str,
-        condition: &Option<SetCondition>,
-        expiry: &Option<SetExpiry>,
-        get: bool,
-    ) -> RespValue {
-        trace!("SET {} = {}", key, value);
-        let prev = self.store.get(key);
-
-        // Handle SET command conditions
-        let condition_met = match condition {
-            None => true,
-            Some(NX) => prev.is_none(),
-            Some(XX) => prev.is_some(),
-            Some(IfEq(s)) => prev.as_deref().is_some_and(|v| v == s),
-            Some(IfNe(s)) => prev.as_deref().is_some_and(|v| v != s),
-            Some(IfDeq(u)) => prev.as_deref().is_some_and(|v| Self::digest_value(v) == *u),
-            Some(IfDne(u)) => prev.as_deref().is_some_and(|v| Self::digest_value(v) != *u),
-        };
-
-        if condition_met {
-            let prev_ttl = if matches!(expiry, Some(KeepTtl)) {
-                self.store.get_ttl(key)
-            } else {
-                None
-            };
-
-            self.store.set(key, value.to_string());
-
-            // Handle SET command expiry arguments
-            match expiry {
-                None => {} // TTL already cleared by store.set()
-                Some(Ex(secs)) => match Instant::now().checked_add(Duration::from_secs(*secs)) {
-                    None => {
-                        return RespValue::SimpleError(
-                            "ERR invalid expire time in 'set' command".to_string(),
-                        );
-                    }
-                    Some(deadline) => {
-                        self.store.set_ttl(key, deadline);
-                    }
-                },
-                Some(Px(millis)) => {
-                    match Instant::now().checked_add(Duration::from_millis(*millis)) {
-                        None => {
-                            return RespValue::SimpleError(
-                                "ERR invalid expire time in 'set' command".to_string(),
-                            );
-                        }
-                        Some(deadline) => {
-                            self.store.set_ttl(key, deadline);
-                        }
-                    }
-                }
-                Some(ExAt(deadline_secs)) => {
-                    self.store
-                        .set_ttl(key, Self::unix_secs_to_instant(*deadline_secs));
-                }
-                Some(PxAt(deadline_ms)) => {
-                    self.store
-                        .set_ttl(key, Self::unix_ms_to_instant(*deadline_ms));
-                }
-                Some(KeepTtl) => {
-                    if let Some(ttl) = prev_ttl {
-                        self.store.set_ttl(key, ttl);
-                    }
-                }
-            }
-        }
-
-        if get {
-            return RespValue::BulkString(prev);
-        }
-
-        if condition_met {
-            RespValue::SimpleString("OK".to_string())
-        } else {
-            RespValue::BulkString(None)
-        }
-    }
-
     fn delete(&self, keys: &[String]) -> RespValue {
         let count: i64 = keys.iter().map(|k| self.store.delete(k) as i64).sum();
         trace!("DEL {:?}: deleted {}", keys, count);
         RespValue::Integer(count)
-    }
-
-    fn get_del(&self, key: &str) -> RespValue {
-        let value = self.store.get_del(key);
-        trace!("GETDEL {}: {:?}", key, value);
-        RespValue::BulkString(value)
     }
 
     fn exists(&self, keys: &[String]) -> RespValue {
@@ -263,17 +178,6 @@ impl Executor {
             self.store
                 .set_ttl(key, Self::unix_ms_to_instant(deadline_ms)) as i64,
         )
-    }
-
-    fn digest(&self, key: &str) -> RespValue {
-        match self.store.get(key) {
-            Some(v) => RespValue::BulkString(Some(format!("{:016x}", Self::digest_value(&v)))),
-            None => RespValue::BulkString(None),
-        }
-    }
-
-    fn digest_value(v: &str) -> u64 {
-        xxh3_64(v.as_bytes())
     }
 
     fn select(&self, index: u8) -> RespValue {

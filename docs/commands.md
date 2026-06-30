@@ -9,6 +9,14 @@
 | `GETDEL`       | `GETDEL key`                                   | —                                                              |
 | `DIGEST`       | `DIGEST key`                                   | —                                                              |
 | `EXISTS`       | `EXISTS key [key …]`                           | —                                                              |
+| `LPUSH`        | `LPUSH key element [element …]`                | —                                                              |
+| `RPUSH`        | `RPUSH key element [element …]`                | —                                                              |
+| `LPUSHX`       | `LPUSHX key element [element …]`               | —                                                              |
+| `RPUSHX`       | `RPUSHX key element [element …]`               | —                                                              |
+| `LPOP`         | `LPOP key [count]`                             | —                                                              |
+| `RPOP`         | `RPOP key [count]`                             | —                                                              |
+| `LLEN`         | `LLEN key`                                     | —                                                              |
+| `LINDEX`       | `LINDEX key index`                             | —                                                              |
 | `EXPIRE`       | `EXPIRE key seconds`                           |                                                                |
 | `PEXPIRE`      | `PEXPIRE key milliseconds`                     |                                                                |
 | `EXPIREAT`     | `EXPIREAT key unix-secs`                       |                                                                |
