@@ -113,6 +113,31 @@ impl Store {
             Some(_) => Err(WrongType),
         }
     }
+
+    /// Returns the element at index index in the list stored at key. The index is zero-based.
+    /// When the value at key is not a list, an error is returned. When the index is out of range, `Ok(None)` is returned.
+    pub fn lindex(&self, key: &str, index: i64) -> Result<Option<String>, WrongType> {
+        let guard = self.inner.read().unwrap();
+        match guard.get(key) {
+            Some(StoreValue::List(list)) => {
+                // Handle negative indexes such as -1, -2, etc.
+                let i = if index < 0 {
+                    let abs = index.unsigned_abs() as usize;
+                    if abs > list.len() {
+                        return Ok(None);
+                    }
+
+                    list.len() - abs
+                } else {
+                    index as usize
+                };
+
+                Ok(list.get(i).cloned())
+            }
+            Some(_) => Err(WrongType),
+            None => Ok(None),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -348,6 +373,55 @@ mod tests {
         assert_eq!(store.llen("key"), Err(WrongType));
     }
 
+    // lindex
+    #[test]
+    fn test_lindex_returns_nil_on_missing_key() {
+        let store = Store::new();
+        assert_eq!(store.lindex("missing", 0), Ok(None));
+    }
+
+    #[test]
+    fn test_lindex_returns_wrongtype_on_non_list_key() {
+        let store = Store::new();
+        store.set("key", StoreValue::Str("val".to_string()));
+        assert_eq!(store.lindex("key", 0), Err(WrongType));
+    }
+
+    #[test]
+    fn test_lindex_returns_element_at_positive_index() {
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.rpush("key", "b".to_string()).unwrap();
+        store.rpush("key", "c".to_string()).unwrap();
+        assert_eq!(store.lindex("key", 0), Ok(Some("a".to_string())));
+        assert_eq!(store.lindex("key", 2), Ok(Some("c".to_string())));
+    }
+
+    #[test]
+    fn test_lindex_positive_index_out_of_bounds_returns_nil() {
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        assert_eq!(store.lindex("key", 1), Ok(None));
+    }
+
+    #[test]
+    fn test_lindex_returns_element_at_negative_index() {
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.rpush("key", "b".to_string()).unwrap();
+        store.rpush("key", "c".to_string()).unwrap();
+        assert_eq!(store.lindex("key", -1), Ok(Some("c".to_string())));
+        assert_eq!(store.lindex("key", -3), Ok(Some("a".to_string())));
+    }
+
+    #[test]
+    fn test_lindex_negative_index_out_of_bounds_returns_nil() {
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.rpush("key", "b".to_string()).unwrap();
+        assert_eq!(store.lindex("key", -3), Ok(None));
+    }
+
     // expiry
     #[test]
     fn test_llen_returns_zero_on_expired_key() {
@@ -412,5 +486,14 @@ mod tests {
         store.rpush("key", "a".to_string()).unwrap();
         store.set_ttl("key", Instant::now() - Duration::from_secs(1));
         assert_eq!(store.rpushx("key", "b".to_string()), Ok(0));
+    }
+
+    #[test]
+    fn test_lindex_returns_nil_on_expired_key() {
+        use std::time::{Duration, Instant};
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.set_ttl("key", Instant::now() - Duration::from_secs(1));
+        assert_eq!(store.lindex("key", 0), Ok(None));
     }
 }

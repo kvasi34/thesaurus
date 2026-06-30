@@ -16,6 +16,7 @@
 | `LPOP`         | `LPOP key [count]`                             | —                                                              |
 | `RPOP`         | `RPOP key [count]`                             | —                                                              |
 | `LLEN`         | `LLEN key`                                     | —                                                              |
+| `LINDEX`       | `LINDEX key index`                             | —                                                              |
 | `EXPIRE`       | `EXPIRE key seconds`                           |                                                                |
 | `PEXPIRE`      | `PEXPIRE key milliseconds`                     |                                                                |
 | `EXPIREAT`     | `EXPIREAT key unix-secs`                       |                                                                |

@@ -91,6 +91,16 @@ impl Executor {
             Err(_) => RespValue::SimpleError(WRONGTYPE_ERROR.to_string()),
         }
     }
+
+    /// Handles LINDEX: returns the element at `index` in the list at `key`. Returns nil if the key
+    /// does not exist or the index is out of range. Returns a WRONGTYPE error if the key holds a
+    /// non-list value.
+    pub(super) fn lindex(&self, key: &str, index: i64) -> RespValue {
+        match self.store.lindex(key, index) {
+            Ok(element) => RespValue::BulkString(element),
+            Err(_) => RespValue::SimpleError(WRONGTYPE_ERROR.to_string()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -301,5 +311,53 @@ mod tests {
         let ex = executor();
         ex.store.set_string("key", "val");
         assert!(matches!(ex.llen("key"), RespValue::SimpleError(_)));
+    }
+
+    // lindex
+    #[test]
+    fn test_lindex_returns_nil_on_missing_key() {
+        let ex = executor();
+        assert_eq!(ex.lindex("missing", 0), RespValue::BulkString(None));
+    }
+
+    #[test]
+    fn test_lindex_returns_element_at_positive_index() {
+        let ex = executor();
+        ex.rpush("key", &els(&["a", "b", "c"]));
+        assert_eq!(
+            ex.lindex("key", 1),
+            RespValue::BulkString(Some("b".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_lindex_positive_index_out_of_bounds_returns_nil() {
+        let ex = executor();
+        ex.rpush("key", &els(&["a"]));
+        assert_eq!(ex.lindex("key", 1), RespValue::BulkString(None));
+    }
+
+    #[test]
+    fn test_lindex_returns_element_at_negative_index() {
+        let ex = executor();
+        ex.rpush("key", &els(&["a", "b", "c"]));
+        assert_eq!(
+            ex.lindex("key", -1),
+            RespValue::BulkString(Some("c".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_lindex_negative_index_out_of_bounds_returns_nil() {
+        let ex = executor();
+        ex.rpush("key", &els(&["a", "b"]));
+        assert_eq!(ex.lindex("key", -3), RespValue::BulkString(None));
+    }
+
+    #[test]
+    fn test_lindex_returns_wrongtype_on_non_list_key() {
+        let ex = executor();
+        ex.store.set_string("key", "val");
+        assert!(matches!(ex.lindex("key", 0), RespValue::SimpleError(_)));
     }
 }

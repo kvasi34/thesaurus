@@ -47,19 +47,19 @@ pub enum Command {
         /// Return the previous value as part of the SET response.
         get: bool,
     },
-    /// Delete a key-value pair.
+    /// Deletes a key-value pair.
     Delete { keys: Vec<String> },
-    /// Get the value for a key and delete key-value pair.
+    /// Gets the value for a key and delete key-value pair.
     GetDel { key: String },
     /// Returns if key(s) exists.
     Exists { keys: Vec<String> },
-    /// Prepend one or more elements to a list, creating the key if it does not exist.
+    /// Prepends one or more elements to a list, creating the key if it does not exist.
     LPush { key: String, elements: Vec<String> },
-    /// Append one or more elements to a list, creating the key if it does not exist.
+    /// Appends one or more elements to a list, creating the key if it does not exist.
     RPush { key: String, elements: Vec<String> },
-    /// Prepend one or more elements to a list, only if the key already exists and holds a list.
+    /// Prepends one or more elements to a list, only if the key already exists and holds a list.
     LPushX { key: String, elements: Vec<String> },
-    /// Append one or more elements to a list, only if the key already exists and holds a list.
+    /// Appends one or more elements to a list, only if the key already exists and holds a list.
     RPushX { key: String, elements: Vec<String> },
     /// Removes and returns the first elements of the list stored at key.
     LPop { key: String, count: Option<u64> },
@@ -67,30 +67,32 @@ pub enum Command {
     RPop { key: String, count: Option<u64> },
     /// Returns the length of the list stored at key.
     LLen { key: String },
-    /// Get the remaining time to live of a key that has a timeout.
+    /// Gets the remaining time to live of a key that has a timeout.
     Ttl { key: String },
+    /// Returns the element at index `index` in the list stored at key.
+    LIndex { key: String, index: i64 },
     /// Returns the absolute Unix timestamp (since January 1, 1970) in seconds at which the given key will expire.
     ExpireTime { key: String },
     /// Returns the absolute Unix timestamp (since January 1, 1970) in milliseconds at which the given key will expire.
     PExpireTime { key: String },
-    /// Remove the expiry from a key, making it permanent.
+    /// Removes the expiry from a key, making it permanent.
     Persist { key: String },
-    /// Set a timeout for a key by specifying the number of seconds representing the TTL (time to live).
+    /// Sets a timeout for a key by specifying the number of seconds representing the TTL (time to live).
     Expire { key: String, seconds: u64 },
-    /// Set a timeout for a key by specifying the number of milliseconds representing the TTL (time to live).
+    /// Sets a timeout for a key by specifying the number of milliseconds representing the TTL (time to live).
     PExpire { key: String, milliseconds: u64 },
-    /// Set a timeout for a key at an absolute Unix timestamp in seconds.
+    /// Sets a timeout for a key at an absolute Unix timestamp in seconds.
     ExpireAt { key: String, deadline_secs: u64 },
-    /// Set a timeout for a key at an absolute Unix timestamp in milliseconds.
+    /// Sets a timeout for a key at an absolute Unix timestamp in milliseconds.
     PExpireAt { key: String, deadline_ms: u64 },
-    /// Get the hash digest for the value stored in the specified key as a hexadecimal string. A hash digest is a fixed-size
+    /// Gets the hash digest for the value stored in the specified key as a hexadecimal string. A hash digest is a fixed-size
     /// numerical representation of a string value, computed using the XXH3 hash algorithm. Can be used for efficient comparison operations.
     Digest { key: String },
     /// No-op command; Thesaurus is a single-store database. Only accepts 0 as a valid index.
     Select { index: u8 },
     /// Returns the number of keys in the database.
     DbSize,
-    /// Flush all keys from the database.
+    /// Flushes all keys from the database.
     FlushDb { mode: Option<FlushMode> },
 }
 
@@ -152,6 +154,7 @@ impl Command {
             "LPOP" => Command::parse_pop_command(args, |key, count| Command::LPop { key, count }),
             "RPOP" => Command::parse_pop_command(args, |key, count| Command::RPop { key, count }),
             "LLEN" => Command::parse_key_command(args, |key| Command::LLen { key }),
+            "LINDEX" => Command::parse_lindex_command(args),
             "TTL" => Command::parse_key_command(args, |key| Command::Ttl { key }),
             "EXPIRETIME" => Command::parse_key_command(args, |key| Command::ExpireTime { key }),
             "PEXPIRETIME" => Command::parse_key_command(args, |key| Command::PExpireTime { key }),
@@ -976,6 +979,48 @@ mod tests {
                 got: 1
             }
         );
+    }
+
+    #[test]
+    fn test_from_resp2_lindex() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LINDEX", "mylist", "2"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::LIndex {
+                key: "mylist".to_string(),
+                index: 2
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_lindex_negative_index() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LINDEX", "mylist", "-1"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::LIndex {
+                key: "mylist".to_string(),
+                index: -1
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_lindex_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LINDEX", "mylist"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 3,
+                got: 2
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_lindex_not_an_integer() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LINDEX", "mylist", "foo"]));
+        assert!(matches!(cmd.err().unwrap(), HandlerError::NotAnInteger(_)));
     }
 
     #[test]
