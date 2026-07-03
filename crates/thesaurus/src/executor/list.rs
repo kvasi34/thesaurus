@@ -1,10 +1,11 @@
+use crate::errors::StoreError;
 use crate::resp2::RespValue;
-use crate::store::{Store, WrongType};
+use crate::store::Store;
 
-use super::{Executor, WRONGTYPE_ERROR};
+use super::Executor;
 
 /// Function pointer type for store-level pop operations (`Store::lpop` / `Store::rpop`).
-type PopFn = fn(&Store, &str, u64) -> Result<Option<Vec<String>>, WrongType>;
+type PopFn = fn(&Store, &str, u64) -> Result<Option<Vec<String>>, StoreError>;
 
 impl Executor {
     /// Shared logic for all push variants. Iterates `elements`, calling `push_fn` for each, and
@@ -14,13 +15,13 @@ impl Executor {
         store: &Store,
         key: &str,
         elements: &[String],
-        push_fn: fn(&Store, &str, String) -> Result<usize, WrongType>,
+        push_fn: fn(&Store, &str, String) -> Result<usize, StoreError>,
     ) -> RespValue {
         let mut size = 0;
         for element in elements {
             match push_fn(store, key, element.clone()) {
                 Ok(n) => size = n,
-                Err(_) => return RespValue::SimpleError(WRONGTYPE_ERROR.to_string()),
+                Err(e) => return RespValue::SimpleError(e.to_string()),
             }
         }
 
@@ -67,7 +68,7 @@ impl Executor {
                 ))
             }
             Ok(None) => RespValue::BulkString(None),
-            Err(_) => RespValue::SimpleError(WRONGTYPE_ERROR.to_string()),
+            Err(e) => RespValue::SimpleError(e.to_string()),
         }
     }
 
@@ -83,12 +84,19 @@ impl Executor {
         Self::pop_inner(&self.store, key, count, Store::rpop)
     }
 
+    pub(super) fn lset(&self, key: &str, index: i64, element: String) -> RespValue {
+        match self.store.lset(key, index, element) {
+            Ok(_) => RespValue::SimpleString("OK".to_string()),
+            Err(e) => RespValue::SimpleError(e.to_string()),
+        }
+    }
+
     /// Handles LLEN: returns the number of elements in the list at `key`. Returns 0 if the key
     /// does not exist. Returns a WRONGTYPE error if the key holds a non-list value.
     pub(super) fn llen(&self, key: &str) -> RespValue {
         match self.store.llen(key) {
             Ok(n) => RespValue::Integer(n as i64),
-            Err(_) => RespValue::SimpleError(WRONGTYPE_ERROR.to_string()),
+            Err(e) => RespValue::SimpleError(e.to_string()),
         }
     }
 
@@ -98,7 +106,7 @@ impl Executor {
     pub(super) fn lindex(&self, key: &str, index: i64) -> RespValue {
         match self.store.lindex(key, index) {
             Ok(element) => RespValue::BulkString(element),
-            Err(_) => RespValue::SimpleError(WRONGTYPE_ERROR.to_string()),
+            Err(e) => RespValue::SimpleError(e.to_string()),
         }
     }
 }
@@ -359,5 +367,73 @@ mod tests {
         let ex = executor();
         ex.store.set_string("key", "val");
         assert!(matches!(ex.lindex("key", 0), RespValue::SimpleError(_)));
+    }
+
+    // lset
+    #[test]
+    fn test_lset_returns_ok_on_valid_positive_index() {
+        let ex = executor();
+        ex.rpush("key", &els(&["a", "b", "c"]));
+        assert_eq!(
+            ex.lset("key", 1, "x".to_string()),
+            RespValue::SimpleString("OK".to_string())
+        );
+        assert_eq!(
+            ex.lindex("key", 1),
+            RespValue::BulkString(Some("x".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_lset_returns_ok_on_valid_negative_index() {
+        let ex = executor();
+        ex.rpush("key", &els(&["a", "b", "c"]));
+        assert_eq!(
+            ex.lset("key", -1, "z".to_string()),
+            RespValue::SimpleString("OK".to_string())
+        );
+        assert_eq!(
+            ex.lindex("key", -1),
+            RespValue::BulkString(Some("z".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_lset_positive_index_out_of_bounds_returns_error() {
+        let ex = executor();
+        ex.rpush("key", &els(&["a", "b"]));
+        assert!(matches!(
+            ex.lset("key", 5, "x".to_string()),
+            RespValue::SimpleError(_)
+        ));
+    }
+
+    #[test]
+    fn test_lset_negative_index_out_of_bounds_returns_error() {
+        let ex = executor();
+        ex.rpush("key", &els(&["a", "b"]));
+        assert!(matches!(
+            ex.lset("key", -3, "x".to_string()),
+            RespValue::SimpleError(_)
+        ));
+    }
+
+    #[test]
+    fn test_lset_returns_error_on_missing_key() {
+        let ex = executor();
+        assert!(matches!(
+            ex.lset("missing", 0, "x".to_string()),
+            RespValue::SimpleError(_)
+        ));
+    }
+
+    #[test]
+    fn test_lset_returns_wrongtype_on_non_list_key() {
+        let ex = executor();
+        ex.store.set_string("key", "val");
+        assert!(matches!(
+            ex.lset("key", 0, "x".to_string()),
+            RespValue::SimpleError(_)
+        ));
     }
 }

@@ -8,10 +8,6 @@ use std::time::Instant;
 
 use rand::seq::IteratorRandom;
 
-/// Returned when an operation is attempted on a key that holds the wrong data type.
-#[derive(Debug, PartialEq)]
-pub struct WrongType;
-
 /// Wrapper for `Store` data structures.
 #[derive(Clone, Debug, PartialEq)]
 enum StoreValue {

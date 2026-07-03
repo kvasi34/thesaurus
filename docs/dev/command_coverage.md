@@ -93,7 +93,7 @@ Implementation status of every Redis 8.8 command, grouped by data type.
 | `LPUSHX` | Prepends elements to a list only when the list exists | ✓ | | |
 | `LRANGE` | Returns a range of elements from a list | | ✓ | |
 | `LREM` | Removes occurrences of an element from a list | | | |
-| `LSET` | Sets the value of an element in a list by its index | | ✓ | |
+| `LSET` | Sets the value of an element in a list by its index | ✓ | | |
 | `LTRIM` | Trims a list to the specified range | | | |
 | `RPOP` | Returns and removes the last element(s) of a list | ✓ | | |
 | `RPOPLPUSH` | Pops from the tail of one list and pushes to the head of another | | | |

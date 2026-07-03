@@ -2579,6 +2579,140 @@ async fn test_lindex_wrong_arity() {
     assert!(matches!(response, RespValue::SimpleError(_)));
 }
 
+// --- LSET ---
+
+#[tokio::test]
+async fn test_lset_sets_element_at_positive_index() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // LSET mylist 1 x
+    client
+        .write_all(b"*4\r\n$4\r\nLSET\r\n$6\r\nmylist\r\n$1\r\n1\r\n$1\r\nx\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+
+    // Verify via LINDEX
+    client
+        .write_all(b"*3\r\n$6\r\nLINDEX\r\n$6\r\nmylist\r\n$1\r\n1\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(Some("x".to_string())));
+}
+
+#[tokio::test]
+async fn test_lset_sets_element_at_negative_index() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // LSET mylist -1 z
+    client
+        .write_all(b"*4\r\n$4\r\nLSET\r\n$6\r\nmylist\r\n$2\r\n-1\r\n$1\r\nz\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+
+    // Verify via LINDEX
+    client
+        .write_all(b"*3\r\n$6\r\nLINDEX\r\n$6\r\nmylist\r\n$2\r\n-1\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(Some("z".to_string())));
+}
+
+#[tokio::test]
+async fn test_lset_missing_key_returns_error() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // LSET missing 0 x
+    client
+        .write_all(b"*4\r\n$4\r\nLSET\r\n$7\r\nmissing\r\n$1\r\n0\r\n$1\r\nx\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert!(matches!(response, RespValue::SimpleError(_)));
+}
+
+#[tokio::test]
+async fn test_lset_out_of_bounds_returns_error() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // LSET mylist 99 x
+    client
+        .write_all(b"*4\r\n$4\r\nLSET\r\n$6\r\nmylist\r\n$2\r\n99\r\n$1\r\nx\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert!(matches!(response, RespValue::SimpleError(_)));
+}
+
+#[tokio::test]
+async fn test_lset_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // LSET key 0 x
+    client
+        .write_all(b"*4\r\n$4\r\nLSET\r\n$3\r\nkey\r\n$1\r\n0\r\n$1\r\nx\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+#[tokio::test]
+async fn test_lset_wrong_arity() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // LSET mylist 0  (missing element)
+    client
+        .write_all(b"*3\r\n$4\r\nLSET\r\n$6\r\nmylist\r\n$1\r\n0\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert!(matches!(response, RespValue::SimpleError(_)));
+}
+
 #[tokio::test]
 async fn test_set_nx_with_ex() {
     let addr = start_handler().await;

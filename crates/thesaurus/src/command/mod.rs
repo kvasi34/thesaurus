@@ -65,12 +65,18 @@ pub enum Command {
     LPop { key: String, count: Option<u64> },
     /// Removes and returns the last elements of the list stored at key.
     RPop { key: String, count: Option<u64> },
+    /// Sets the list element at `index` to element.
+    LSet {
+        key: String,
+        index: i64,
+        element: String,
+    },
     /// Returns the length of the list stored at key.
     LLen { key: String },
-    /// Gets the remaining time to live of a key that has a timeout.
-    Ttl { key: String },
     /// Returns the element at index `index` in the list stored at key.
     LIndex { key: String, index: i64 },
+    /// Gets the remaining time to live of a key that has a timeout.
+    Ttl { key: String },
     /// Returns the absolute Unix timestamp (since January 1, 1970) in seconds at which the given key will expire.
     ExpireTime { key: String },
     /// Returns the absolute Unix timestamp (since January 1, 1970) in milliseconds at which the given key will expire.
@@ -153,6 +159,7 @@ impl Command {
             }
             "LPOP" => Command::parse_pop_command(args, |key, count| Command::LPop { key, count }),
             "RPOP" => Command::parse_pop_command(args, |key, count| Command::RPop { key, count }),
+            "LSET" => Command::parse_lset_command(args),
             "LLEN" => Command::parse_key_command(args, |key| Command::LLen { key }),
             "LINDEX" => Command::parse_lindex_command(args),
             "TTL" => Command::parse_key_command(args, |key| Command::Ttl { key }),
@@ -1020,6 +1027,50 @@ mod tests {
     #[test]
     fn test_from_resp2_lindex_not_an_integer() {
         let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LINDEX", "mylist", "foo"]));
+        assert!(matches!(cmd.err().unwrap(), HandlerError::NotAnInteger(_)));
+    }
+
+    #[test]
+    fn test_from_resp2_lset() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LSET", "mylist", "1", "newval"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::LSet {
+                key: "mylist".to_string(),
+                index: 1,
+                element: "newval".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_lset_negative_index() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LSET", "mylist", "-2", "newval"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::LSet {
+                key: "mylist".to_string(),
+                index: -2,
+                element: "newval".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_lset_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LSET", "mylist", "0"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 4,
+                got: 3
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_lset_not_an_integer() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LSET", "mylist", "foo", "val"]));
         assert!(matches!(cmd.err().unwrap(), HandlerError::NotAnInteger(_)));
     }
 

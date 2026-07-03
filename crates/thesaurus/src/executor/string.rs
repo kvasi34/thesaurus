@@ -7,7 +7,7 @@ use crate::command::SetCondition::{self, IfDeq, IfDne, IfEq, IfNe, NX, XX};
 use crate::command::SetExpiry::{self, Ex, ExAt, KeepTtl, Px, PxAt};
 use crate::resp2::RespValue::{self, BulkString};
 
-use super::{Executor, WRONGTYPE_ERROR};
+use super::Executor;
 
 impl Executor {
     pub(super) fn get(&self, key: &str) -> RespValue {
@@ -16,7 +16,7 @@ impl Executor {
         match value {
             Ok(Some(s)) => BulkString(Some(s)),
             Ok(None) => BulkString(None),
-            Err(_) => RespValue::SimpleError(WRONGTYPE_ERROR.to_string()),
+            Err(e) => RespValue::SimpleError(e.to_string()),
         }
     }
 
@@ -31,7 +31,7 @@ impl Executor {
         trace!("SET {} = {}", key, value);
         let prev = match self.store.get_string(key) {
             Ok(s) => s,
-            Err(_) => return RespValue::SimpleError(WRONGTYPE_ERROR.to_string()),
+            Err(e) => return RespValue::SimpleError(e.to_string()),
         };
 
         // Handle SET command conditions
@@ -109,7 +109,7 @@ impl Executor {
     pub(super) fn get_del(&self, key: &str) -> RespValue {
         let value = match self.store.get_del_string(key) {
             Ok(s) => s,
-            Err(_) => return RespValue::SimpleError(WRONGTYPE_ERROR.to_string()),
+            Err(e) => return RespValue::SimpleError(e.to_string()),
         };
         trace!("GETDEL {}: {:?}", key, value);
         RespValue::BulkString(value)
@@ -119,7 +119,7 @@ impl Executor {
         match self.store.get_string(key) {
             Ok(Some(s)) => RespValue::BulkString(Some(format!("{:016x}", Self::digest_value(&s)))),
             Ok(None) => RespValue::BulkString(None),
-            Err(_) => RespValue::SimpleError(WRONGTYPE_ERROR.to_string()),
+            Err(e) => RespValue::SimpleError(e.to_string()),
         }
     }
 

@@ -9,8 +9,6 @@ use crate::command::{Command, FlushMode};
 use crate::resp2::RespValue;
 use crate::store::Store;
 
-const WRONGTYPE_ERROR: &str = "WRONGTYPE Operation against a key holding the wrong kind of value";
-
 /// Bridges [`Command`] to [`Store`]: the single place where commands are
 /// applied to in-memory state.
 ///
@@ -58,6 +56,11 @@ impl Executor {
             Command::RPushX { key, elements } => self.rpushx(key, elements),
             Command::LPop { key, count } => self.lpop(key, *count),
             Command::RPop { key, count } => self.rpop(key, *count),
+            Command::LSet {
+                key,
+                index,
+                element,
+            } => self.lset(key, *index, element.clone()),
             Command::LLen { key } => self.llen(key),
             Command::LIndex { key, index } => self.lindex(key, *index),
             Command::Ttl { key } => self.ttl(key),
