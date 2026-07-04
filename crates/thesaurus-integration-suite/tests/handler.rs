@@ -2713,6 +2713,190 @@ async fn test_lset_wrong_arity() {
     assert!(matches!(response, RespValue::SimpleError(_)));
 }
 
+// --- LRANGE ---
+
+#[tokio::test]
+async fn test_lrange_missing_key_returns_empty_array() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // LRANGE missing 0 -1
+    client
+        .write_all(b"*4\r\n$6\r\nLRANGE\r\n$7\r\nmissing\r\n$1\r\n0\r\n$2\r\n-1\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Array(None));
+}
+
+#[tokio::test]
+async fn test_lrange_returns_full_range() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // LRANGE mylist 0 -1
+    client
+        .write_all(b"*4\r\n$6\r\nLRANGE\r\n$6\r\nmylist\r\n$1\r\n0\r\n$2\r\n-1\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("a".to_string())),
+            RespValue::BulkString(Some("b".to_string())),
+            RespValue::BulkString(Some("c".to_string())),
+        ]))
+    );
+}
+
+#[tokio::test]
+async fn test_lrange_returns_subset_with_positive_indices() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a", "b", "c", "d"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // LRANGE mylist 1 2
+    client
+        .write_all(b"*4\r\n$6\r\nLRANGE\r\n$6\r\nmylist\r\n$1\r\n1\r\n$1\r\n2\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("b".to_string())),
+            RespValue::BulkString(Some("c".to_string())),
+        ]))
+    );
+}
+
+#[tokio::test]
+async fn test_lrange_returns_subset_with_negative_indices() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a", "b", "c", "d"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // LRANGE mylist -2 -1
+    client
+        .write_all(b"*4\r\n$6\r\nLRANGE\r\n$6\r\nmylist\r\n$2\r\n-2\r\n$2\r\n-1\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("c".to_string())),
+            RespValue::BulkString(Some("d".to_string())),
+        ]))
+    );
+}
+
+#[tokio::test]
+async fn test_lrange_start_greater_than_stop_returns_empty_array() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // LRANGE mylist 2 1
+    client
+        .write_all(b"*4\r\n$6\r\nLRANGE\r\n$6\r\nmylist\r\n$1\r\n2\r\n$1\r\n1\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Array(None));
+}
+
+#[tokio::test]
+async fn test_lrange_clamps_stop_beyond_list_length() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // LRANGE mylist 0 99
+    client
+        .write_all(b"*4\r\n$6\r\nLRANGE\r\n$6\r\nmylist\r\n$1\r\n0\r\n$2\r\n99\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("a".to_string())),
+            RespValue::BulkString(Some("b".to_string())),
+            RespValue::BulkString(Some("c".to_string())),
+        ]))
+    );
+}
+
+#[tokio::test]
+async fn test_lrange_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // LRANGE key 0 -1
+    client
+        .write_all(b"*4\r\n$6\r\nLRANGE\r\n$3\r\nkey\r\n$1\r\n0\r\n$2\r\n-1\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+#[tokio::test]
+async fn test_lrange_wrong_arity() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // LRANGE mylist 0  (missing stop)
+    client
+        .write_all(b"*3\r\n$6\r\nLRANGE\r\n$6\r\nmylist\r\n$1\r\n0\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert!(matches!(response, RespValue::SimpleError(_)));
+}
+
 #[tokio::test]
 async fn test_set_nx_with_ex() {
     let addr = start_handler().await;

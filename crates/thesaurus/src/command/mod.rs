@@ -75,6 +75,8 @@ pub enum Command {
     LLen { key: String },
     /// Returns the element at index `index` in the list stored at key.
     LIndex { key: String, index: i64 },
+    /// Returns the specified elements of the list stored at key.
+    LRange { key: String, start: i64, stop: i64 },
     /// Gets the remaining time to live of a key that has a timeout.
     Ttl { key: String },
     /// Returns the absolute Unix timestamp (since January 1, 1970) in seconds at which the given key will expire.
@@ -162,6 +164,7 @@ impl Command {
             "LSET" => Command::parse_lset_command(args),
             "LLEN" => Command::parse_key_command(args, |key| Command::LLen { key }),
             "LINDEX" => Command::parse_lindex_command(args),
+            "LRANGE" => Command::parse_lrange_command(args),
             "TTL" => Command::parse_key_command(args, |key| Command::Ttl { key }),
             "EXPIRETIME" => Command::parse_key_command(args, |key| Command::ExpireTime { key }),
             "PEXPIRETIME" => Command::parse_key_command(args, |key| Command::PExpireTime { key }),
@@ -1071,6 +1074,56 @@ mod tests {
     #[test]
     fn test_from_resp2_lset_not_an_integer() {
         let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LSET", "mylist", "foo", "val"]));
+        assert!(matches!(cmd.err().unwrap(), HandlerError::NotAnInteger(_)));
+    }
+
+    #[test]
+    fn test_from_resp2_lrange() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LRANGE", "mylist", "0", "-1"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::LRange {
+                key: "mylist".to_string(),
+                start: 0,
+                stop: -1,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_lrange_negative_indices() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LRANGE", "mylist", "-3", "-1"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::LRange {
+                key: "mylist".to_string(),
+                start: -3,
+                stop: -1,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_lrange_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LRANGE", "mylist", "0"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 4,
+                got: 3
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_lrange_start_not_an_integer() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LRANGE", "mylist", "foo", "-1"]));
+        assert!(matches!(cmd.err().unwrap(), HandlerError::NotAnInteger(_)));
+    }
+
+    #[test]
+    fn test_from_resp2_lrange_stop_not_an_integer() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LRANGE", "mylist", "0", "foo"]));
         assert!(matches!(cmd.err().unwrap(), HandlerError::NotAnInteger(_)));
     }
 

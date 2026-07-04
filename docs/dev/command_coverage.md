@@ -91,7 +91,7 @@ Implementation status of every Redis 8.8 command, grouped by data type.
 | `LPOS` | Returns the index of matching elements in a list | | | |
 | `LPUSH` | Prepends one or more elements to a list | ✓ | | |
 | `LPUSHX` | Prepends elements to a list only when the list exists | ✓ | | |
-| `LRANGE` | Returns a range of elements from a list | | ✓ | |
+| `LRANGE` | Returns a range of elements from a list | ✓ | | |
 | `LREM` | Removes occurrences of an element from a list | | | |
 | `LSET` | Sets the value of an element in a list by its index | ✓ | | |
 | `LTRIM` | Trims a list to the specified range | | | |

@@ -109,6 +109,21 @@ impl Executor {
             Err(e) => RespValue::SimpleError(e.to_string()),
         }
     }
+
+    /// Handles LRANGE: returns the elements between `start` and `stop` (inclusive) in the list at
+    /// `key`. Returns an empty array if the key does not exist. Returns a WRONGTYPE error if the
+    /// key holds a non-list value.
+    pub(super) fn lrange(&self, key: &str, start: i64, stop: i64) -> RespValue {
+        match self.store.lrange(key, start, stop) {
+            Ok(elements) => RespValue::Array(Some(
+                elements
+                    .into_iter()
+                    .map(|s| RespValue::BulkString(Some(s)))
+                    .collect(),
+            )),
+            Err(e) => RespValue::SimpleError(e.to_string()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -435,5 +450,66 @@ mod tests {
             ex.lset("key", 0, "x".to_string()),
             RespValue::SimpleError(_)
         ));
+    }
+
+    // lrange
+    #[test]
+    fn test_lrange_returns_empty_array_on_missing_key() {
+        let ex = executor();
+        assert_eq!(ex.lrange("missing", 0, -1), RespValue::Array(Some(vec![])));
+    }
+
+    #[test]
+    fn test_lrange_returns_full_range() {
+        let ex = executor();
+        ex.rpush("key", &els(&["a", "b", "c"]));
+        assert_eq!(
+            ex.lrange("key", 0, -1),
+            RespValue::Array(Some(vec![
+                RespValue::BulkString(Some("a".to_string())),
+                RespValue::BulkString(Some("b".to_string())),
+                RespValue::BulkString(Some("c".to_string())),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_lrange_returns_subset_with_positive_indices() {
+        let ex = executor();
+        ex.rpush("key", &els(&["a", "b", "c"]));
+        assert_eq!(
+            ex.lrange("key", 0, 1),
+            RespValue::Array(Some(vec![
+                RespValue::BulkString(Some("a".to_string())),
+                RespValue::BulkString(Some("b".to_string())),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_lrange_returns_subset_with_negative_indices() {
+        let ex = executor();
+        ex.rpush("key", &els(&["a", "b", "c"]));
+        assert_eq!(
+            ex.lrange("key", -2, -1),
+            RespValue::Array(Some(vec![
+                RespValue::BulkString(Some("b".to_string())),
+                RespValue::BulkString(Some("c".to_string())),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_lrange_returns_empty_array_when_start_greater_than_stop() {
+        let ex = executor();
+        ex.rpush("key", &els(&["a", "b", "c"]));
+        assert_eq!(ex.lrange("key", 2, 0), RespValue::Array(Some(vec![])));
+    }
+
+    #[test]
+    fn test_lrange_returns_wrongtype_on_non_list_key() {
+        let ex = executor();
+        ex.store.set_string("key", "val");
+        assert!(matches!(ex.lrange("key", 0, -1), RespValue::SimpleError(_)));
     }
 }

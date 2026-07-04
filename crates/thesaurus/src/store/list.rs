@@ -152,6 +152,47 @@ impl Store {
             None => Ok(None),
         }
     }
+
+    /// Returns the elements of the list at `key` between `start` and `stop`, inclusive. Both bounds
+    /// are zero-based and support negative indexing, with `-1` denoting the last element.
+    /// Out-of-range bounds are clamped rather than erroring. Returns an empty vector if the key does
+    /// not exist, the list is empty, or `start` is greater than `stop`. Returns
+    /// `Err(StoreError::WrongType)` if the key holds a non-list value.
+    pub fn lrange(&self, key: &str, start: i64, stop: i64) -> Result<Vec<String>, StoreError> {
+        let guard = self.inner.read().unwrap();
+        match guard.get(key) {
+            Some(StoreValue::List(l)) => {
+                let len = l.len() as i64;
+                if len == 0 {
+                    return Ok(Vec::new());
+                }
+
+                // Resolve negative indices relative to the list length. A `start` that is still
+                // negative afterwards clamps to 0; a `stop` that is still negative is left as-is so
+                // that the start > stop check below correctly yields an empty result.
+                let start = if start < 0 {
+                    (start + len).max(0)
+                } else {
+                    start
+                };
+                let stop = if stop < 0 { stop + len } else { stop };
+
+                // Return an empty array if start > stop, or if start is beyond the list
+                if start > stop || start >= len {
+                    return Ok(Vec::new());
+                }
+
+                // Clamp stop to the last valid index rather than erroring
+                let stop = stop.min(len - 1);
+
+                Ok(l.range(start as usize..=stop as usize)
+                    .cloned()
+                    .collect::<Vec<String>>())
+            }
+            Some(_) => Err(StoreError::WrongType),
+            None => Ok(Vec::new()),
+        }
+    }
 }
 
 /// Helper method which handles negative indexes such as -1, -2, etc.
@@ -537,6 +578,103 @@ mod tests {
             store.lset("key", 0, "x".to_string()),
             Err(StoreError::NoSuchKey)
         );
+    }
+
+    // lrange
+    #[test]
+    fn test_lrange_returns_empty_on_missing_key() {
+        let store = Store::new();
+        assert_eq!(store.lrange("missing", 0, -1), Ok(Vec::new()));
+    }
+
+    #[test]
+    fn test_lrange_returns_wrongtype_on_non_list_key() {
+        let store = Store::new();
+        store.set("key", StoreValue::Str("val".to_string()));
+        assert_eq!(store.lrange("key", 0, -1), Err(StoreError::WrongType));
+    }
+
+    #[test]
+    fn test_lrange_returns_full_list_with_zero_and_negative_one() {
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.rpush("key", "b".to_string()).unwrap();
+        store.rpush("key", "c".to_string()).unwrap();
+        assert_eq!(
+            store.lrange("key", 0, -1),
+            Ok(vec!["a".to_string(), "b".to_string(), "c".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_lrange_returns_subset_with_positive_indices() {
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.rpush("key", "b".to_string()).unwrap();
+        store.rpush("key", "c".to_string()).unwrap();
+        assert_eq!(
+            store.lrange("key", 0, 1),
+            Ok(vec!["a".to_string(), "b".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_lrange_returns_subset_with_negative_indices() {
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.rpush("key", "b".to_string()).unwrap();
+        store.rpush("key", "c".to_string()).unwrap();
+        assert_eq!(
+            store.lrange("key", -2, -1),
+            Ok(vec!["b".to_string(), "c".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_lrange_clamps_start_more_negative_than_list_length() {
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.rpush("key", "b".to_string()).unwrap();
+        assert_eq!(
+            store.lrange("key", -100, -1),
+            Ok(vec!["a".to_string(), "b".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_lrange_clamps_stop_beyond_list_length() {
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.rpush("key", "b".to_string()).unwrap();
+        assert_eq!(
+            store.lrange("key", 0, 100),
+            Ok(vec!["a".to_string(), "b".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_lrange_returns_empty_when_start_greater_than_stop() {
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.rpush("key", "b".to_string()).unwrap();
+        store.rpush("key", "c".to_string()).unwrap();
+        assert_eq!(store.lrange("key", 2, 0), Ok(Vec::new()));
+    }
+
+    #[test]
+    fn test_lrange_returns_empty_when_start_beyond_list_length() {
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        assert_eq!(store.lrange("key", 5, 10), Ok(Vec::new()));
+    }
+
+    #[test]
+    fn test_lrange_returns_empty_when_stop_still_negative_after_resolution() {
+        let store = Store::new();
+        store.rpush("key", "a".to_string()).unwrap();
+        store.rpush("key", "b".to_string()).unwrap();
+        store.rpush("key", "c".to_string()).unwrap();
+        assert_eq!(store.lrange("key", 0, -100), Ok(Vec::new()));
     }
 
     // expiry

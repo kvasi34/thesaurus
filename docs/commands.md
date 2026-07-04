@@ -18,6 +18,7 @@
 | `LLEN`         | `LLEN key`                                     | —                                                              |
 | `LINDEX`       | `LINDEX key index`                             | —                                                              |
 | `LSET`         | `LSET key index element`                       | —                                                              |
+| `LRANGE`       | `LRANGE key start stop`                        | —                                                              |
 | `EXPIRE`       | `EXPIRE key seconds`                           |                                                                |
 | `PEXPIRE`      | `PEXPIRE key milliseconds`                     |                                                                |
 | `EXPIREAT`     | `EXPIREAT key unix-secs`                       |                                                                |

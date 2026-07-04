@@ -97,4 +97,30 @@ impl Command {
 
         Ok(Command::LIndex { key, index })
     }
+
+    /// Generic method to parse the arguments of the LRANGE command into relevant enum.
+    pub(super) fn parse_lrange_command(args: &[RespValue]) -> Result<Self, HandlerError> {
+        super::check_arity(args, 4)?;
+
+        let key = match &args[1] {
+            RespValue::BulkString(Some(s)) => s.clone(),
+            _ => unreachable!(),
+        };
+
+        let start = match &args[2] {
+            RespValue::BulkString(Some(s)) => s
+                .parse::<i64>()
+                .map_err(|_| HandlerError::NotAnInteger(s.clone()))?,
+            _ => unreachable!(),
+        };
+
+        let stop = match &args[3] {
+            RespValue::BulkString(Some(s)) => s
+                .parse::<i64>()
+                .map_err(|_| HandlerError::NotAnInteger(s.clone()))?,
+            _ => unreachable!(),
+        };
+
+        Ok(Command::LRange { key, start, stop })
+    }
 }

@@ -63,6 +63,7 @@ impl Executor {
             } => self.lset(key, *index, element.clone()),
             Command::LLen { key } => self.llen(key),
             Command::LIndex { key, index } => self.lindex(key, *index),
+            Command::LRange { key, start, stop } => self.lrange(key, *start, *stop),
             Command::Ttl { key } => self.ttl(key),
             Command::ExpireTime { key } => self.expire_time(key),
             Command::PExpireTime { key } => self.pexpire_time(key),
