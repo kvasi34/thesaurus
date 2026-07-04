@@ -19,7 +19,8 @@ pub enum RespValue {
     Integer(i64),
     /// `$6\r\nfoobar\r\n` — a binary-safe string. `None` represents the null bulk string (`$-1\r\n`).
     BulkString(Option<String>),
-    /// `*3\r\n:1\r\n:2\r\n:3\r\n` — an ordered list of `RespValue` elements. `None` represents an empty array (`*0\r\n`).
+    /// `*3\r\n:1\r\n:2\r\n:3\r\n` — an ordered list of `RespValue` elements. `None` represents the null array (`*-1\r\n`);
+    /// `Some(vec![])` represents the empty array (`*0\r\n`).
     Array(Option<Vec<RespValue>>),
 }
 
@@ -210,9 +211,14 @@ where
 {
     let length_value = parse_length(length)?;
 
-    // Return empty arrays as None
-    if length_value == 0 {
+    // Handle null arrays
+    if length_value == -1 {
         return Ok(RespValue::Array(None));
+    }
+
+    // Return empty arrays as Some(vec![])
+    if length_value == 0 {
+        return Ok(RespValue::Array(Some(Vec::new())));
     }
 
     // Recursively parse the rest of the stream
@@ -232,9 +238,14 @@ where
 {
     let length_value = parse_length(length)?;
 
-    // Return empty arrays as None
-    if length_value == 0 {
+    // Handle null arrays
+    if length_value == -1 {
         return Ok(RespValue::Array(None));
+    }
+
+    // Return empty arrays as Some(vec![])
+    if length_value == 0 {
+        return Ok(RespValue::Array(Some(Vec::new())));
     }
 
     // Recursively parse the rest of the stream
@@ -272,6 +283,11 @@ fn encode_bulk_string(bulk_string: &Option<String>, buffer: &mut Vec<u8>) {
 fn encode_array(arr: &Option<Vec<RespValue>>, buffer: &mut Vec<u8>) {
     match arr {
         Some(items) => {
+            if items.is_empty() {
+                write!(buffer, "*0\r\n").unwrap();
+                return;
+            }
+
             // Write the array prefix to buffer
             write!(buffer, "*{}\r\n", items.len()).unwrap();
 
@@ -281,7 +297,7 @@ fn encode_array(arr: &Option<Vec<RespValue>>, buffer: &mut Vec<u8>) {
                 buffer.extend_from_slice(&encoded_item);
             }
         }
-        None => write!(buffer, "*0\r\n").unwrap(),
+        None => write!(buffer, "*-1\r\n").unwrap(),
     }
 }
 
@@ -390,6 +406,14 @@ mod tests {
     #[tokio::test]
     async fn test_decode_empty_array() {
         let mut cursor = Cursor::new(b"*0\r\n");
+        let result = decode_async(&mut cursor).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), RespValue::Array(Some(Vec::new())));
+    }
+
+    #[tokio::test]
+    async fn test_decode_null_array() {
+        let mut cursor = Cursor::new(b"*-1\r\n");
         let result = decode_async(&mut cursor).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), RespValue::Array(None));
@@ -565,7 +589,12 @@ mod tests {
 
     #[test]
     fn test_encode_empty_array() {
-        assert_eq!(encode(&RespValue::Array(None)), b"*0\r\n");
+        assert_eq!(encode(&RespValue::Array(Some(Vec::new()))), b"*0\r\n");
+    }
+
+    #[test]
+    fn test_encode_null_array() {
+        assert_eq!(encode(&RespValue::Array(None)), b"*-1\r\n");
     }
 
     #[test]

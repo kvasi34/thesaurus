@@ -2727,7 +2727,7 @@ async fn test_lrange_missing_key_returns_empty_array() {
         .unwrap();
 
     let response = resp2::decode_async(&mut client).await.unwrap();
-    assert_eq!(response, RespValue::Array(None));
+    assert_eq!(response, RespValue::Array(Some(vec![])));
 }
 
 #[tokio::test]
@@ -2830,7 +2830,7 @@ async fn test_lrange_start_greater_than_stop_returns_empty_array() {
         .unwrap();
 
     let response = resp2::decode_async(&mut client).await.unwrap();
-    assert_eq!(response, RespValue::Array(None));
+    assert_eq!(response, RespValue::Array(Some(vec![])));
 }
 
 #[tokio::test]
