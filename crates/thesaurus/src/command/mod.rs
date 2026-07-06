@@ -1,5 +1,10 @@
+mod list;
+mod string;
+
 use crate::errors::HandlerError;
 use crate::resp2::RespValue;
+
+pub use string::{SetCondition, SetExpiry};
 
 /// Server startup configuration parsed from CLI arguments and environment variables.
 #[cfg(feature = "cli")]
@@ -26,38 +31,6 @@ pub enum FlushMode {
     Async,
 }
 
-/// Condition flag for the SET command. The flags in this group are mutually exclusive.
-#[derive(Debug, PartialEq)]
-pub enum SetCondition {
-    /// Only set if the key does not already exist.
-    NX,
-    /// Only set if the key already exists.
-    XX,
-    /// Only set if the current value equals the given string.
-    IfEq(String),
-    /// Only set if the current value does not equal the given string.
-    IfNe(String),
-    /// Only set if the XXH3 hash digest of the current value equals the given digest.
-    IfDeq(u64),
-    /// Only set if the XXH3 hash digest of the current value does not equal the given digest.
-    IfDne(u64),
-}
-
-/// Expiry option for the SET command. The options in this group are mutually exclusive.
-#[derive(Debug, PartialEq)]
-pub enum SetExpiry {
-    /// Set TTL in seconds.
-    Ex(u64),
-    /// Set TTL in milliseconds.
-    Px(u64),
-    /// Set expiry as a Unix timestamp in seconds.
-    ExAt(u64),
-    /// Set expiry as a Unix timestamp in milliseconds.
-    PxAt(u64),
-    /// Retain the existing TTL.
-    KeepTtl,
-}
-
 /// Command parsed from raw TCP client input.
 #[derive(Debug, PartialEq)]
 pub enum Command {
@@ -74,36 +47,60 @@ pub enum Command {
         /// Return the previous value as part of the SET response.
         get: bool,
     },
-    /// Delete a key-value pair.
+    /// Deletes a key-value pair.
     Delete { keys: Vec<String> },
-    /// Get the value for a key and delete key-value pair.
+    /// Gets the value for a key and delete key-value pair.
     GetDel { key: String },
     /// Returns if key(s) exists.
     Exists { keys: Vec<String> },
-    /// Get the remaining time to live of a key that has a timeout.
+    /// Prepends one or more elements to a list, creating the key if it does not exist.
+    LPush { key: String, elements: Vec<String> },
+    /// Appends one or more elements to a list, creating the key if it does not exist.
+    RPush { key: String, elements: Vec<String> },
+    /// Prepends one or more elements to a list, only if the key already exists and holds a list.
+    LPushX { key: String, elements: Vec<String> },
+    /// Appends one or more elements to a list, only if the key already exists and holds a list.
+    RPushX { key: String, elements: Vec<String> },
+    /// Removes and returns the first elements of the list stored at key.
+    LPop { key: String, count: Option<u64> },
+    /// Removes and returns the last elements of the list stored at key.
+    RPop { key: String, count: Option<u64> },
+    /// Sets the list element at `index` to element.
+    LSet {
+        key: String,
+        index: i64,
+        element: String,
+    },
+    /// Returns the length of the list stored at key.
+    LLen { key: String },
+    /// Returns the element at index `index` in the list stored at key.
+    LIndex { key: String, index: i64 },
+    /// Returns the specified elements of the list stored at key.
+    LRange { key: String, start: i64, stop: i64 },
+    /// Gets the remaining time to live of a key that has a timeout.
     Ttl { key: String },
     /// Returns the absolute Unix timestamp (since January 1, 1970) in seconds at which the given key will expire.
     ExpireTime { key: String },
     /// Returns the absolute Unix timestamp (since January 1, 1970) in milliseconds at which the given key will expire.
     PExpireTime { key: String },
-    /// Remove the expiry from a key, making it permanent.
+    /// Removes the expiry from a key, making it permanent.
     Persist { key: String },
-    /// Set a timeout for a key by specifying the number of seconds representing the TTL (time to live).
+    /// Sets a timeout for a key by specifying the number of seconds representing the TTL (time to live).
     Expire { key: String, seconds: u64 },
-    /// Set a timeout for a key by specifying the number of milliseconds representing the TTL (time to live).
+    /// Sets a timeout for a key by specifying the number of milliseconds representing the TTL (time to live).
     PExpire { key: String, milliseconds: u64 },
-    /// Set a timeout for a key at an absolute Unix timestamp in seconds.
+    /// Sets a timeout for a key at an absolute Unix timestamp in seconds.
     ExpireAt { key: String, deadline_secs: u64 },
-    /// Set a timeout for a key at an absolute Unix timestamp in milliseconds.
+    /// Sets a timeout for a key at an absolute Unix timestamp in milliseconds.
     PExpireAt { key: String, deadline_ms: u64 },
-    /// Get the hash digest for the value stored in the specified key as a hexadecimal string. A hash digest is a fixed-size
+    /// Gets the hash digest for the value stored in the specified key as a hexadecimal string. A hash digest is a fixed-size
     /// numerical representation of a string value, computed using the XXH3 hash algorithm. Can be used for efficient comparison operations.
     Digest { key: String },
     /// No-op command; Thesaurus is a single-store database. Only accepts 0 as a valid index.
     Select { index: u8 },
     /// Returns the number of keys in the database.
     DbSize,
-    /// Flush all keys from the database.
+    /// Flushes all keys from the database.
     FlushDb { mode: Option<FlushMode> },
 }
 
@@ -150,6 +147,24 @@ impl Command {
             "DEL" => Command::parse_keys_command(args, |keys| Command::Delete { keys }),
             "GETDEL" => Command::parse_key_command(args, |key| Command::GetDel { key }),
             "EXISTS" => Command::parse_keys_command(args, |keys| Command::Exists { keys }),
+            "LPUSH" => {
+                Command::parse_push_command(args, |key, elements| Command::LPush { key, elements })
+            }
+            "RPUSH" => {
+                Command::parse_push_command(args, |key, elements| Command::RPush { key, elements })
+            }
+            "LPUSHX" => {
+                Command::parse_push_command(args, |key, elements| Command::LPushX { key, elements })
+            }
+            "RPUSHX" => {
+                Command::parse_push_command(args, |key, elements| Command::RPushX { key, elements })
+            }
+            "LPOP" => Command::parse_pop_command(args, |key, count| Command::LPop { key, count }),
+            "RPOP" => Command::parse_pop_command(args, |key, count| Command::RPop { key, count }),
+            "LSET" => Command::parse_lset_command(args),
+            "LLEN" => Command::parse_key_command(args, |key| Command::LLen { key }),
+            "LINDEX" => Command::parse_lindex_command(args),
+            "LRANGE" => Command::parse_lrange_command(args),
             "TTL" => Command::parse_key_command(args, |key| Command::Ttl { key }),
             "EXPIRETIME" => Command::parse_key_command(args, |key| Command::ExpireTime { key }),
             "PEXPIRETIME" => Command::parse_key_command(args, |key| Command::PExpireTime { key }),
@@ -182,6 +197,12 @@ impl Command {
             Command::Set { .. }
                 | Command::Delete { .. }
                 | Command::GetDel { .. }
+                | Command::LPush { .. }
+                | Command::RPush { .. }
+                | Command::LPushX { .. }
+                | Command::RPushX { .. }
+                | Command::LPop { .. }
+                | Command::RPop { .. }
                 | Command::Persist { .. }
                 | Command::Expire { .. }
                 | Command::PExpire { .. }
@@ -222,144 +243,12 @@ impl Command {
         Ok(make_cmd(key))
     }
 
-    /// Helper function to parse the arguments of a SET command into a `Command::Set` struct.
-    fn parse_set_command(args: &[RespValue]) -> Result<Self, HandlerError> {
-        if args.len() < 3 {
-            return Err(HandlerError::WrongArity {
-                expected: 3,
-                got: args.len() as u8,
-            });
-        }
-
-        let key = match &args[1] {
-            RespValue::BulkString(Some(s)) => s.clone(),
-            _ => unreachable!(),
-        };
-        let value = match &args[2] {
-            RespValue::BulkString(Some(s)) => s.clone(),
-            _ => unreachable!(),
-        };
-
-        // Parse arguments
-        let mut condition: Option<SetCondition> = None;
-        let mut expiry: Option<SetExpiry> = None;
-        let mut get = false;
-
-        // Helper closure to safely retrieve the next argument
-        let get_next_token = |args: &[RespValue], i: &mut usize| -> Result<String, HandlerError> {
-            *i += 1;
-            let next_token = args.get(*i);
-            match next_token {
-                Some(RespValue::BulkString(Some(s))) => Ok(s.clone()),
-                _ => Err(HandlerError::SyntaxError),
-            }
-        };
-
-        // Helper closure to check if the condition has already been defined
-        let guard_duplicate_condition =
-            |condition: &Option<SetCondition>| -> Result<_, HandlerError> {
-                if condition.is_some() {
-                    return Err(HandlerError::SyntaxError);
-                }
-
-                Ok(())
-            };
-
-        let mut i: usize = 3;
-        while i < args.len() {
-            let token = match &args[i] {
-                RespValue::BulkString(Some(s)) => s.as_str(),
-                _ => unreachable!(),
-            };
-
-            match token {
-                "NX" => {
-                    guard_duplicate_condition(&condition)?;
-
-                    condition = Some(SetCondition::NX);
-                }
-                "XX" => {
-                    guard_duplicate_condition(&condition)?;
-
-                    condition = Some(SetCondition::XX);
-                }
-                "IFEQ" => {
-                    guard_duplicate_condition(&condition)?;
-
-                    let next_token = get_next_token(args, &mut i)?;
-                    condition = Some(SetCondition::IfEq(next_token));
-                }
-                "IFNE" => {
-                    guard_duplicate_condition(&condition)?;
-
-                    let next_token = get_next_token(args, &mut i)?;
-                    condition = Some(SetCondition::IfNe(next_token));
-                }
-                "IFDEQ" | "IFDNE" => {
-                    guard_duplicate_condition(&condition)?;
-
-                    let next_token = get_next_token(args, &mut i)?;
-                    let n = u64::from_str_radix(&next_token, 16)
-                        .map_err(|_| HandlerError::NotAnInteger(next_token))?;
-                    condition = Some(match token {
-                        "IFDEQ" => SetCondition::IfDeq(n),
-                        _ => SetCondition::IfDne(n),
-                    });
-                }
-                "GET" => {
-                    get = true;
-                }
-                "EX" | "PX" | "EXAT" | "PXAT" => {
-                    if expiry.is_some() {
-                        return Err(HandlerError::SyntaxError);
-                    }
-
-                    let next_token = get_next_token(args, &mut i)?;
-                    let n = next_token
-                        .parse::<u64>()
-                        .map_err(|_| HandlerError::NotAnInteger(next_token))?;
-                    expiry = Some(match token {
-                        "EX" => SetExpiry::Ex(n),
-                        "PX" => SetExpiry::Px(n),
-                        "EXAT" => SetExpiry::ExAt(n),
-                        _ => SetExpiry::PxAt(n),
-                    });
-                }
-                "KEEPTTL" => {
-                    if expiry.is_some() {
-                        return Err(HandlerError::SyntaxError);
-                    }
-
-                    expiry = Some(SetExpiry::KeepTtl);
-                }
-                _ => {
-                    return Err(HandlerError::SyntaxError);
-                }
-            }
-
-            i += 1;
-        }
-
-        Ok(Command::Set {
-            key,
-            value,
-            condition,
-            expiry,
-            get,
-        })
-    }
-
     /// Helper function to parse the arguments of commands that require one or more `keys` arguments into the `Command` struct.
     fn parse_keys_command(
         args: &[RespValue],
         make_cmd: fn(Vec<String>) -> Command,
     ) -> Result<Self, HandlerError> {
-        if args.len() < 2 {
-            return Err(HandlerError::WrongArity {
-                expected: 2,
-                got: args.len() as u8,
-            });
-        }
+        check_min_arity(args, 2)?;
 
         let mut keys: Vec<String> = Vec::new();
         for arg in args.iter().skip(1) {
@@ -452,6 +341,19 @@ fn check_arity(args: &[RespValue], expected: usize) -> Result<(), HandlerError> 
             got: args.len() as u8,
         });
     }
+
+    Ok(())
+}
+
+/// Helper function to ensure that at least `min_expected` arguments were given.
+pub(super) fn check_min_arity(args: &[RespValue], min_expected: usize) -> Result<(), HandlerError> {
+    if args.len() < min_expected {
+        return Err(HandlerError::WrongArity {
+            expected: min_expected as u8,
+            got: args.len() as u8,
+        });
+    }
+
     Ok(())
 }
 
@@ -1064,6 +966,165 @@ mod tests {
                 key: "foo".to_string()
             }
         )
+    }
+
+    #[test]
+    fn test_from_resp2_llen() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LLEN", "mylist"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::LLen {
+                key: "mylist".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_llen_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LLEN"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 2,
+                got: 1
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_lindex() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LINDEX", "mylist", "2"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::LIndex {
+                key: "mylist".to_string(),
+                index: 2
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_lindex_negative_index() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LINDEX", "mylist", "-1"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::LIndex {
+                key: "mylist".to_string(),
+                index: -1
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_lindex_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LINDEX", "mylist"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 3,
+                got: 2
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_lindex_not_an_integer() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LINDEX", "mylist", "foo"]));
+        assert!(matches!(cmd.err().unwrap(), HandlerError::NotAnInteger(_)));
+    }
+
+    #[test]
+    fn test_from_resp2_lset() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LSET", "mylist", "1", "newval"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::LSet {
+                key: "mylist".to_string(),
+                index: 1,
+                element: "newval".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_lset_negative_index() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LSET", "mylist", "-2", "newval"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::LSet {
+                key: "mylist".to_string(),
+                index: -2,
+                element: "newval".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_lset_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LSET", "mylist", "0"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 4,
+                got: 3
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_lset_not_an_integer() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LSET", "mylist", "foo", "val"]));
+        assert!(matches!(cmd.err().unwrap(), HandlerError::NotAnInteger(_)));
+    }
+
+    #[test]
+    fn test_from_resp2_lrange() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LRANGE", "mylist", "0", "-1"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::LRange {
+                key: "mylist".to_string(),
+                start: 0,
+                stop: -1,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_lrange_negative_indices() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LRANGE", "mylist", "-3", "-1"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::LRange {
+                key: "mylist".to_string(),
+                start: -3,
+                stop: -1,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_lrange_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LRANGE", "mylist", "0"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 4,
+                got: 3
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_lrange_start_not_an_integer() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LRANGE", "mylist", "foo", "-1"]));
+        assert!(matches!(cmd.err().unwrap(), HandlerError::NotAnInteger(_)));
+    }
+
+    #[test]
+    fn test_from_resp2_lrange_stop_not_an_integer() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["LRANGE", "mylist", "0", "foo"]));
+        assert!(matches!(cmd.err().unwrap(), HandlerError::NotAnInteger(_)));
     }
 
     #[test]

@@ -55,22 +55,22 @@ pub enum HandlerError {
 impl fmt::Display for HandlerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            HandlerError::UnexpectedType { expected, got } => {
+            Self::UnexpectedType { expected, got } => {
                 write!(
                     f,
                     "unexpected type: expected '{}', got '{:?}'",
                     expected, got
                 )
             }
-            HandlerError::UnknownCommand(s) => write!(f, "unknown command: '{}'", s),
-            HandlerError::WrongArity { expected, got } => write!(
+            Self::UnknownCommand(s) => write!(f, "unknown command: '{}'", s),
+            Self::WrongArity { expected, got } => write!(
                 f,
                 "wrong number of arguments: expected {}, got {}",
                 expected, got
             ),
-            HandlerError::NotAnInteger(s) => write!(f, "not an integer: '{}'", s),
-            HandlerError::DbIndexOutOfRange => write!(f, "ERR DB index is out of range"),
-            HandlerError::SyntaxError => write!(f, "ERR syntax error"),
+            Self::NotAnInteger(s) => write!(f, "not an integer: '{}'", s),
+            Self::DbIndexOutOfRange => write!(f, "ERR DB index is out of range"),
+            Self::SyntaxError => write!(f, "ERR syntax error"),
         }
     }
 }
@@ -80,5 +80,29 @@ impl std::error::Error for HandlerError {}
 impl From<HandlerError> for std::io::Error {
     fn from(e: HandlerError) -> Self {
         std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+    }
+}
+
+/// Errors that can occur in [`crate::store::Store`] operations.
+#[derive(Debug, PartialEq)]
+pub enum StoreError {
+    /// The operation was attempted on a key that holds the wrong data type.
+    WrongType,
+    /// Out of index error.
+    OutOfIndex,
+    /// The key does not match any key in the store.
+    NoSuchKey,
+}
+
+impl fmt::Display for StoreError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::WrongType => write!(
+                f,
+                "WRONGTYPE Operation against a key holding the wrong kind of value"
+            ),
+            Self::OutOfIndex => write!(f, "ERR index out of range"),
+            Self::NoSuchKey => write!(f, "ERR No such key"),
+        }
     }
 }

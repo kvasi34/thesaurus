@@ -16,17 +16,17 @@ All source files live under `crates/thesaurus/src/`:
 - `lib.rs` — crate root; re-exports all public modules
 - `main.rs` — binary entry point; binds the TCP listener, accepts connections, spawns handler tasks, handles shutdown
 - `handler.rs` — per-connection handler; decodes RESP2 input, dispatches to `Executor`, writes responses
-- `command.rs` — CLI argument parsing (via clap) and RESP2-to-command parsing
-- `executor.rs` — bridges `Command` to `Store`; the single place where commands are applied to state
+- `command/` — CLI argument parsing (via clap) and RESP2-to-command parsing; `mod.rs` holds the `Command` enum and dispatch, `string.rs` holds `SetCondition`, `SetExpiry`, and SET parsing
+- `executor/` — bridges `Command` to `Store`; `mod.rs` holds the `Executor` struct and generic command handlers, `string.rs` holds string-type-specific handlers (`GET`, `SET`, `GETDEL`, `DIGEST`)
 - `config.rs` — INI config file loading via the `config` crate; exposes `ThesaurusConfig`
 - `resp2.rs` — RESP2 protocol encoder and decoder (async for live connections, sync for AOF replay)
-- `store.rs` — shared in-memory `HashMap` wrapped in `Arc<RwLock>` for concurrent access
+- `store/` — shared in-memory `HashMap` wrapped in `Arc<RwLock>` for concurrent access; `mod.rs` holds the `Store` struct, `StoreValue` enum, and all current operations
 - `aof.rs` — optional AOF persistence; appends write commands to disk and replays them on startup
 - `errors.rs` — error types for the handler and RESP2 layers
 
 ## Commands
 
-Supported: `PING`, `GET`, `SET` (NX, XX, IFEQ, IFNE, IFDEQ, IFDNE, GET, EX, PX, EXAT, PXAT, KEEPTTL), `DEL`, `GETDEL`, `DIGEST`, `EXISTS`, `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT`, `TTL`, `EXPIRETIME`, `PEXPIRETIME`, `PERSIST`, `DBSIZE`, `SELECT`, `FLUSHDB`
+Supported: `PING`, `GET`, `SET` (NX, XX, IFEQ, IFNE, IFDEQ, IFDNE, GET, EX, PX, EXAT, PXAT, KEEPTTL), `DEL`, `GETDEL`, `DIGEST`, `EXISTS`, `LPUSH`, `RPUSH`, `LPUSHX`, `RPUSHX`, `LPOP`, `RPOP`, `LLEN`, `LINDEX`, `LSET`, `LRANGE`, `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT`, `TTL`, `EXPIRETIME`, `PEXPIRETIME`, `PERSIST`, `DBSIZE`, `SELECT`, `FLUSHDB`
 
 ## Running
 

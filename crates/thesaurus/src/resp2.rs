@@ -19,74 +19,153 @@ pub enum RespValue {
     Integer(i64),
     /// `$6\r\nfoobar\r\n` — a binary-safe string. `None` represents the null bulk string (`$-1\r\n`).
     BulkString(Option<String>),
-    /// `*3\r\n:1\r\n:2\r\n:3\r\n` — an ordered list of `RespValue` elements. `None` represents an empty array (`*0\r\n`).
+    /// `*3\r\n:1\r\n:2\r\n:3\r\n` — an ordered list of `RespValue` elements. `None` represents the null array (`*-1\r\n`);
+    /// `Some(vec![])` represents the empty array (`*0\r\n`).
     Array(Option<Vec<RespValue>>),
 }
 
-/// Decodes one RESP2 message from an asynchronous `reader` and returns the parsed [`RespValue`].
-///
-/// Reads exactly one message per call — the caller is responsible for calling
-/// this in a loop to process multiple commands from the same connection.
-///
-/// See the [RESP2 spec](https://redis.io/docs/latest/develop/reference/protocol-spec/).
-pub async fn decode_async<R>(reader: &mut R) -> Result<RespValue, RespError>
-where
-    R: AsyncBufRead + AsyncRead + Unpin,
-{
-    let mut line = String::new();
-    match reader.read_line(&mut line).await {
-        Ok(0) | Err(_) => return Err(RespError::UnexpectedEof),
-        Ok(_) => {}
-    }
+/// Macro used to add a `.await` at the end of an expression.
+macro_rules! add_await {
+    (@call [async] $e:expr) => {
+        $e.await
+    };
 
-    let (first_byte, rest) = parse_header(&line)?;
-
-    // Use the first byte to identify the RESP data type and parse accordingly
-    match first_byte {
-        b'+' => Ok(RespValue::SimpleString(rest)),
-        b'-' => Ok(RespValue::SimpleError(rest)),
-        b':' => rest
-            .parse::<i64>()
-            .map(RespValue::Integer)
-            .map_err(|_| RespError::InvalidInteger(rest)),
-        b'$' => parse_bulk_string(rest, reader).await,
-        b'*' => parse_array(rest, reader).await,
-        _ => Err(RespError::UnknownPrefix(first_byte as char)),
-    }
+    (@call [] $e:expr) => {
+        $e
+    };
 }
 
-/// Decodes one RESP2 message from a synchronous `reader` and returns the parsed [`RespValue`].
-///
-/// Intended for startup AOF replay where async I/O is not needed.
-/// Reads exactly one message per call — the caller is responsible for calling
-/// this in a loop to process all commands.
-///
-/// See the [RESP2 spec](https://redis.io/docs/latest/develop/reference/protocol-spec/).
-pub fn decode<R>(reader: &mut R) -> Result<RespValue, RespError>
-where
-    R: BufRead + Read,
-{
-    let mut line = String::new();
-    match reader.read_line(&mut line) {
-        Ok(0) | Err(_) => return Err(RespError::UnexpectedEof),
-        Ok(_) => {}
-    }
+/// Declarative macro which encapsulates all the shared logic of the `async` and `sync` `decode` functions.
+macro_rules! decode_impl {
+    (
+        $(#[$doc:meta])*
+        fn $name:ident,
+        reader: { $($bound:tt)+ },
+        bulk_string: $bulk_string_fn:ident,
+        array: $array_fn:ident
+        $(, $async_kw:ident)?
+    ) => {
+        $(#[$doc])*
+        pub $($async_kw)? fn $name<R>(reader: &mut R) -> Result<RespValue, RespError>
+        where
+            R: $($bound)+,
+        {
+            let mut line = String::new();
+            match add_await!(@call [$($async_kw)?] reader.read_line(&mut line)) {
+                Ok(0) | Err(_) => return Err(RespError::UnexpectedEof),
+                Ok(_) => {}
+            }
 
-    let (first_byte, rest) = parse_header(&line)?;
+            let (first_byte, rest) = parse_header(&line)?;
 
-    // Use the first byte to identify the RESP data type and parse accordingly
-    match first_byte {
-        b'+' => Ok(RespValue::SimpleString(rest)),
-        b'-' => Ok(RespValue::SimpleError(rest)),
-        b':' => rest
-            .parse::<i64>()
-            .map(RespValue::Integer)
-            .map_err(|_| RespError::InvalidInteger(rest)),
-        b'$' => parse_bulk_string_sync(rest, reader),
-        b'*' => parse_array_sync(rest, reader),
-        _ => Err(RespError::UnknownPrefix(first_byte as char)),
-    }
+            // Use the first byte to identify the RESP data type and parse accordingly
+            match first_byte {
+                b'+' => Ok(RespValue::SimpleString(rest)),
+                b'-' => Ok(RespValue::SimpleError(rest)),
+                b':' => rest
+                    .parse::<i64>()
+                    .map(RespValue::Integer)
+                    .map_err(|_| RespError::InvalidInteger(rest)),
+                b'$' => add_await!(@call [$($async_kw)?] $bulk_string_fn(rest, reader)),
+                b'*' => add_await!(@call [$($async_kw)?] $array_fn(rest, reader)),
+                _ => Err(RespError::UnknownPrefix(first_byte as char)),
+            }
+        }
+    };
 }
+
+decode_impl! {
+    /// Decodes one RESP2 message from an asynchronous `reader` and returns the parsed [`RespValue`].
+    ///
+    /// Reads exactly one message per call — the caller is responsible for calling
+    /// this in a loop to process multiple commands from the same connection.
+    ///
+    /// See the [RESP2 spec](https://redis.io/docs/latest/develop/reference/protocol-spec/).
+    fn decode_async,
+    reader: { AsyncBufRead + AsyncRead + Unpin },
+    bulk_string: parse_bulk_string,
+    array: parse_array,
+    async
+}
+
+decode_impl! {
+    /// Decodes one RESP2 message from a synchronous `reader` and returns the parsed [`RespValue`].
+    ///
+    /// Intended for startup AOF replay where async I/O is not needed.
+    /// Reads exactly one message per call — the caller is responsible for calling
+    /// this in a loop to process all commands.
+    ///
+    /// See the [RESP2 spec](https://redis.io/docs/latest/develop/reference/protocol-spec/).
+    fn decode,
+    reader: { BufRead + Read },
+    bulk_string: parse_bulk_string_sync,
+    array: parse_array_sync
+}
+
+// /// Decodes one RESP2 message from an asynchronous `reader` and returns the parsed [`RespValue`].
+// ///
+// /// Reads exactly one message per call — the caller is responsible for calling
+// /// this in a loop to process multiple commands from the same connection.
+// ///
+// /// See the [RESP2 spec](https://redis.io/docs/latest/develop/reference/protocol-spec/).
+// pub async fn decode_async<R>(reader: &mut R) -> Result<RespValue, RespError>
+// where
+//     R: AsyncBufRead + AsyncRead + Unpin,
+// {
+//     let mut line = String::new();
+//     match reader.read_line(&mut line).await {
+//         Ok(0) | Err(_) => return Err(RespError::UnexpectedEof),
+//         Ok(_) => {}
+//     }
+
+//     let (first_byte, rest) = parse_header(&line)?;
+
+//     // Use the first byte to identify the RESP data type and parse accordingly
+//     match first_byte {
+//         b'+' => Ok(RespValue::SimpleString(rest)),
+//         b'-' => Ok(RespValue::SimpleError(rest)),
+//         b':' => rest
+//             .parse::<i64>()
+//             .map(RespValue::Integer)
+//             .map_err(|_| RespError::InvalidInteger(rest)),
+//         b'$' => parse_bulk_string(rest, reader).await,
+//         b'*' => parse_array(rest, reader).await,
+//         _ => Err(RespError::UnknownPrefix(first_byte as char)),
+//     }
+// }
+
+// /// Decodes one RESP2 message from a synchronous `reader` and returns the parsed [`RespValue`].
+// ///
+// /// Intended for startup AOF replay where async I/O is not needed.
+// /// Reads exactly one message per call — the caller is responsible for calling
+// /// this in a loop to process all commands.
+// ///
+// /// See the [RESP2 spec](https://redis.io/docs/latest/develop/reference/protocol-spec/).
+// pub fn decode<R>(reader: &mut R) -> Result<RespValue, RespError>
+// where
+//     R: BufRead + Read,
+// {
+//     let mut line = String::new();
+//     match reader.read_line(&mut line) {
+//         Ok(0) | Err(_) => return Err(RespError::UnexpectedEof),
+//         Ok(_) => {}
+//     }
+
+//     let (first_byte, rest) = parse_header(&line)?;
+
+//     // Use the first byte to identify the RESP data type and parse accordingly
+//     match first_byte {
+//         b'+' => Ok(RespValue::SimpleString(rest)),
+//         b'-' => Ok(RespValue::SimpleError(rest)),
+//         b':' => rest
+//             .parse::<i64>()
+//             .map(RespValue::Integer)
+//             .map_err(|_| RespError::InvalidInteger(rest)),
+//         b'$' => parse_bulk_string_sync(rest, reader),
+//         b'*' => parse_array_sync(rest, reader),
+//         _ => Err(RespError::UnknownPrefix(first_byte as char)),
+//     }
+// }
 
 /// Encodes a [`RespValue`] into its RESP2 wire-format bytes.
 ///
@@ -150,100 +229,107 @@ fn bulk_string_from_bytes(length_value: i64, bytes: Vec<u8>) -> Result<RespValue
     Ok(RespValue::BulkString(Some(value)))
 }
 
-/*
-Parses a RESP2 bulk string. The `length` parameter is the string value extracted from the first part of the bulk string,
-indicating how many bytes are in the string.
+/// Declarative macro which encapsulates all the shared logic of the `async` and `sync` `parse_bulk_string` functions.
+macro_rules! parse_bulk_string_impl {
+    (
+        $(#[$doc:meta])*
+        fn $name:ident,
+        reader: { $($bound:tt)+ }
+        $(, $async_kw:ident)?
+    ) => {
+        $(#[$doc])*
+        $($async_kw)? fn $name<R>(length: String, reader: &mut R) -> Result<RespValue, RespError>
+        where
+            R: $($bound)+,
+        {
+            let length_value = parse_length(length)?;
 
-The `reader` parameter is needed to retrieve the second part of the bulk string, which is the actual string.
-*/
-async fn parse_bulk_string<R>(length: String, reader: &mut R) -> Result<RespValue, RespError>
-where
-    R: AsyncBufRead + AsyncRead + Unpin,
-{
-    let length_value = parse_length(length)?;
+            // Handle null bulk strings
+            if length_value == -1 {
+                return Ok(RespValue::BulkString(None));
+            }
 
-    // Handle null bulk strings
-    if length_value == -1 {
-        return Ok(RespValue::BulkString(None));
-    }
+            // Parse the second part of the bulk string, which contains the actual string
+            let mut second_part = vec![0u8; length_value as usize + 2]; // +2 for \r\n
+            add_await!(@call [$($async_kw)?] reader.read_exact(&mut second_part))
+                .map_err(|_| RespError::UnexpectedEof)?;
 
-    // Parse the second part of the bulk string, which contains the actual string
-    let mut second_part = vec![0u8; length_value as usize + 2]; // +2 for \r\n
-    reader
-        .read_exact(&mut second_part)
-        .await
-        .map_err(|_| RespError::UnexpectedEof)?;
-
-    bulk_string_from_bytes(length_value, second_part)
+            bulk_string_from_bytes(length_value, second_part)
+        }
+    };
 }
 
-// Sync version of parse_bulk_string
-fn parse_bulk_string_sync<R>(length: String, reader: &mut R) -> Result<RespValue, RespError>
-where
-    R: Read,
-{
-    let length_value = parse_length(length)?;
-
-    // Handle null bulk strings
-    if length_value == -1 {
-        return Ok(RespValue::BulkString(None));
-    }
-
-    // Parse the second part of the bulk string, which contains the actual string
-    let mut second_part = vec![0u8; length_value as usize + 2]; // +2 for \r\n
-    reader
-        .read_exact(&mut second_part)
-        .map_err(|_| RespError::UnexpectedEof)?;
-
-    bulk_string_from_bytes(length_value, second_part)
+parse_bulk_string_impl! {
+    /// Parses a RESP2 bulk string. The `length` parameter is the string value extracted from the first part of the bulk string,
+    /// indicating how many bytes are in the string.
+    ///
+    /// The `reader` parameter is needed to retrieve the second part of the bulk string, which is the actual string.
+    fn parse_bulk_string,
+    reader: { AsyncBufRead + AsyncRead + Unpin },
+    async
 }
 
-/*
-Parses a RESP2 array. The `length` parameter is the string value extracted from the first part of the array,
-indicating how many elements are in the array.
-
-The `reader` parameter is needed to retrieve the rest of the elements of the array.
-*/
-async fn parse_array<R>(length: String, reader: &mut R) -> Result<RespValue, RespError>
-where
-    R: AsyncBufRead + AsyncRead + Unpin,
-{
-    let length_value = parse_length(length)?;
-
-    // Return empty arrays as None
-    if length_value == 0 {
-        return Ok(RespValue::Array(None));
-    }
-
-    // Recursively parse the rest of the stream
-    let mut resp_values_array = Vec::<RespValue>::new();
-    for _ in 0..length_value {
-        // Box::pin is needed here because recursion in an async function requires boxing
-        resp_values_array.push(Box::pin(decode_async(reader)).await?);
-    }
-
-    Ok(RespValue::Array(Some(resp_values_array)))
+parse_bulk_string_impl! {
+    /// Sync version of [`parse_bulk_string`]
+    fn parse_bulk_string_sync,
+    reader: { Read }
 }
 
-// Sync version of parse_array
-fn parse_array_sync<R>(length: String, reader: &mut R) -> Result<RespValue, RespError>
-where
-    R: BufRead + Read,
-{
-    let length_value = parse_length(length)?;
+/// Declarative macro which encapsulates all the shared logic of the `async` and `sync` `parse_array` functions.
+macro_rules! parse_array_impl {
+    (
+        $(#[$doc:meta])*
+        fn $name:ident,
+        reader: { $($bound:tt)+ }
+        $(, $async_kw:ident)?
+    ) => {
+        $(#[$doc])*
+        $($async_kw)? fn $name<R>(length: String, reader: &mut R) -> Result<RespValue, RespError>
+        where
+            R: $($bound)+,
+        {
+            let length_value = parse_length(length)?;
 
-    // Return empty arrays as None
-    if length_value == 0 {
-        return Ok(RespValue::Array(None));
-    }
+            // Handle null arrays
+            if length_value == -1 {
+                return Ok(RespValue::Array(None));
+            }
 
-    // Recursively parse the rest of the stream
-    let mut resp_values_array = Vec::<RespValue>::new();
-    for _ in 0..length_value {
-        resp_values_array.push(decode(reader)?);
-    }
+            // Return empty arrays as Some(vec![])
+            if length_value == 0 {
+                return Ok(RespValue::Array(Some(Vec::new())));
+            }
 
-    Ok(RespValue::Array(Some(resp_values_array)))
+            // Recursively parse the rest of the stream
+            let mut resp_values_array = Vec::<RespValue>::new();
+            for _ in 0..length_value {
+                resp_values_array.push(add_await!(@call [$($async_kw)?] parse_array_impl!(@call [$($async_kw)?] reader))?);
+            }
+
+            Ok(RespValue::Array(Some(resp_values_array)))
+        }
+    };
+
+    // Box::pin is needed here because recursion in an async function requires boxing
+    (@call [async] $reader:expr) => { Box::pin(decode_async($reader)) };
+
+    (@call [] $reader:expr) => { decode($reader) };
+}
+
+parse_array_impl! {
+    /// Parses a RESP2 array. The `length` parameter is the string value extracted from the first part of the array,
+    /// indicating how many elements are in the array.
+    ///
+    /// The `reader` parameter is needed to retrieve the rest of the elements of the array.
+    fn parse_array,
+    reader: { AsyncBufRead + AsyncRead + Unpin },
+    async
+}
+
+parse_array_impl! {
+    /// Sync version of [`parse_array`]
+    fn parse_array_sync,
+    reader: { BufRead + Read }
 }
 
 // Parses and validates the length value that is part of some RESP2 data types
@@ -272,6 +358,11 @@ fn encode_bulk_string(bulk_string: &Option<String>, buffer: &mut Vec<u8>) {
 fn encode_array(arr: &Option<Vec<RespValue>>, buffer: &mut Vec<u8>) {
     match arr {
         Some(items) => {
+            if items.is_empty() {
+                write!(buffer, "*0\r\n").unwrap();
+                return;
+            }
+
             // Write the array prefix to buffer
             write!(buffer, "*{}\r\n", items.len()).unwrap();
 
@@ -281,7 +372,7 @@ fn encode_array(arr: &Option<Vec<RespValue>>, buffer: &mut Vec<u8>) {
                 buffer.extend_from_slice(&encoded_item);
             }
         }
-        None => write!(buffer, "*0\r\n").unwrap(),
+        None => write!(buffer, "*-1\r\n").unwrap(),
     }
 }
 
@@ -390,6 +481,14 @@ mod tests {
     #[tokio::test]
     async fn test_decode_empty_array() {
         let mut cursor = Cursor::new(b"*0\r\n");
+        let result = decode_async(&mut cursor).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), RespValue::Array(Some(Vec::new())));
+    }
+
+    #[tokio::test]
+    async fn test_decode_null_array() {
+        let mut cursor = Cursor::new(b"*-1\r\n");
         let result = decode_async(&mut cursor).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), RespValue::Array(None));
@@ -565,7 +664,12 @@ mod tests {
 
     #[test]
     fn test_encode_empty_array() {
-        assert_eq!(encode(&RespValue::Array(None)), b"*0\r\n");
+        assert_eq!(encode(&RespValue::Array(Some(Vec::new()))), b"*0\r\n");
+    }
+
+    #[test]
+    fn test_encode_null_array() {
+        assert_eq!(encode(&RespValue::Array(None)), b"*-1\r\n");
     }
 
     #[test]

@@ -233,7 +233,7 @@ async fn test_getdel_removes_key() {
 async fn test_getdel_expired_key() {
     use std::time::{Duration, Instant};
     let store = Store::new();
-    store.set("foo", "bar".to_string());
+    store.set_string("foo", "bar");
     store.set_ttl("foo", Instant::now() - Duration::from_secs(1));
 
     let addr = start_handler_with_store(store).await;
@@ -251,7 +251,7 @@ async fn test_getdel_expired_key() {
 #[tokio::test]
 async fn test_exists_existing_key() {
     let store = Store::new();
-    store.set("key1", "Hello".to_string());
+    store.set_string("key1", "Hello");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -282,8 +282,8 @@ async fn test_exists_missing_key() {
 #[tokio::test]
 async fn test_exists_multiple_key() {
     let store = Store::new();
-    store.set("key1", "Hello".to_string());
-    store.set("key2", "World".to_string());
+    store.set_string("key1", "Hello");
+    store.set_string("key2", "World");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -433,7 +433,7 @@ async fn test_ttl_key_with_expiry() {
 async fn test_ttl_expired_key() {
     use std::time::{Duration, Instant};
     let store = Store::new();
-    store.set("foo", "bar".to_string());
+    store.set_string("foo", "bar");
     store.set_ttl("foo", Instant::now() - Duration::from_secs(1));
 
     let addr = start_handler_with_store(store).await;
@@ -921,7 +921,7 @@ async fn test_pexpiretime_key_with_expiry() {
 #[tokio::test]
 async fn test_digest() {
     let store = Store::new();
-    store.set("foo", "bar".to_string());
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1019,7 +1019,7 @@ async fn test_dbsize() {
 async fn test_flushdb() {
     use std::time::{Duration, Instant};
     let store = Store::new();
-    store.set("foo", "bar".to_string());
+    store.set_string("foo", "bar");
     store.set_ttl("foo", Instant::now() - Duration::from_secs(1));
 
     let addr = start_handler_with_store(store.clone()).await;
@@ -1034,8 +1034,8 @@ async fn test_flushdb() {
 #[tokio::test]
 async fn test_flushdb_sync() {
     let store = Store::new();
-    store.set("foo", "bar".to_string());
-    store.set("baz", "qux".to_string());
+    store.set_string("foo", "bar");
+    store.set_string("baz", "qux");
 
     let addr = start_handler_with_store(store.clone()).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1052,8 +1052,8 @@ async fn test_flushdb_sync() {
 #[tokio::test]
 async fn test_flushdb_async() {
     let store = Store::new();
-    store.set("foo", "bar".to_string());
-    store.set("baz", "qux".to_string());
+    store.set_string("foo", "bar");
+    store.set_string("baz", "qux");
 
     let addr = start_handler_with_store(store.clone()).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1070,8 +1070,8 @@ async fn test_flushdb_async() {
 #[tokio::test]
 async fn test_flushdb_default_is_sync_when_lazyfree_off() {
     let store = Store::new();
-    store.set("foo", "bar".to_string());
-    store.set("baz", "qux".to_string());
+    store.set_string("foo", "bar");
+    store.set_string("baz", "qux");
 
     let addr = start_handler_with_store_and_lazyfree(store.clone(), false).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1085,8 +1085,8 @@ async fn test_flushdb_default_is_sync_when_lazyfree_off() {
 #[tokio::test]
 async fn test_flushdb_default_is_async_when_lazyfree_on() {
     let store = Store::new();
-    store.set("foo", "bar".to_string());
-    store.set("baz", "qux".to_string());
+    store.set_string("foo", "bar");
+    store.set_string("baz", "qux");
 
     let addr = start_handler_with_store_and_lazyfree(store.clone(), true).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1097,15 +1097,15 @@ async fn test_flushdb_default_is_async_when_lazyfree_on() {
 
     // OK guarantees the swap is done. Insert into the new (empty) data structure
     // while the background drop task may still be pending.
-    store.set("new_key", "value".to_string());
+    store.set_string("new_key", "value");
 
     // Yield to give the background drop task a chance to run — it holds only
     // the old data and must not affect new_key.
     tokio::task::yield_now().await;
 
-    assert_eq!(store.get("new_key"), Some("value".to_string()));
-    assert_eq!(store.get("foo"), None);
-    assert_eq!(store.get("baz"), None);
+    assert_eq!(store.get_string("new_key"), Ok(Some("value".to_string())));
+    assert_eq!(store.get_string("foo"), Ok(None));
+    assert_eq!(store.get_string("baz"), Ok(None));
 }
 
 #[tokio::test]
@@ -1406,7 +1406,7 @@ async fn test_set_nx_missing_key() {
 #[tokio::test]
 async fn test_set_nx_existing_key() {
     let store = Store::new();
-    store.set("foo", "bar".to_string());
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1423,7 +1423,7 @@ async fn test_set_nx_existing_key() {
 #[tokio::test]
 async fn test_set_nx_existing_key_value_unchanged() {
     let store = Store::new();
-    store.set("foo", "bar".to_string());
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1447,7 +1447,7 @@ async fn test_set_nx_existing_key_value_unchanged() {
 #[tokio::test]
 async fn test_set_xx_existing_key() {
     let store = Store::new();
-    store.set("foo", "bar".to_string());
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1513,7 +1513,7 @@ async fn test_set_get_no_previous_value() {
 #[tokio::test]
 async fn test_set_get_with_previous_value() {
     let store = Store::new();
-    store.set("foo", "bar".to_string());
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1702,7 +1702,7 @@ async fn test_set_without_keepttl_clears_ttl() {
 #[tokio::test]
 async fn test_set_ifeq_matching_value() {
     let store = Store::new();
-    store.set("foo", "bar".to_string());
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1719,7 +1719,7 @@ async fn test_set_ifeq_matching_value() {
 #[tokio::test]
 async fn test_set_ifeq_non_matching_value() {
     let store = Store::new();
-    store.set("foo", "bar".to_string());
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1752,7 +1752,7 @@ async fn test_set_ifeq_missing_key() {
 #[tokio::test]
 async fn test_set_ifne_non_matching_value() {
     let store = Store::new();
-    store.set("foo", "bar".to_string());
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1769,7 +1769,7 @@ async fn test_set_ifne_non_matching_value() {
 #[tokio::test]
 async fn test_set_ifne_matching_value() {
     let store = Store::new();
-    store.set("foo", "bar".to_string());
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1804,7 +1804,7 @@ async fn test_set_ifdeq_matching_digest() {
     use xxhash_rust::xxh3::xxh3_64;
 
     let store = Store::new();
-    store.set("foo", "bar".to_string());
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1822,7 +1822,7 @@ async fn test_set_ifdeq_matching_digest() {
 #[tokio::test]
 async fn test_set_ifdeq_non_matching_digest() {
     let store = Store::new();
-    store.set("foo", "bar".to_string());
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1858,7 +1858,7 @@ async fn test_set_ifdeq_missing_key() {
 #[tokio::test]
 async fn test_set_ifdne_non_matching_digest() {
     let store = Store::new();
-    store.set("foo", "bar".to_string());
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1877,7 +1877,7 @@ async fn test_set_ifdne_matching_digest() {
     use xxhash_rust::xxh3::xxh3_64;
 
     let store = Store::new();
-    store.set("foo", "bar".to_string());
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1908,6 +1908,995 @@ async fn test_set_ifdne_missing_key() {
 
 // --- Combinations ---
 
+/// Builds a push command (LPUSH / RPUSH / LPUSHX / RPUSHX) with one or more elements.
+fn push_cmd(cmd: &str, key: &str, elements: &[&str]) -> Vec<u8> {
+    let mut parts = vec![
+        RespValue::BulkString(Some(cmd.to_string())),
+        RespValue::BulkString(Some(key.to_string())),
+    ];
+    for el in elements {
+        parts.push(RespValue::BulkString(Some(el.to_string())));
+    }
+    resp2::encode(&RespValue::Array(Some(parts)))
+}
+
+const WRONGTYPE_ERROR: &str = "WRONGTYPE Operation against a key holding the wrong kind of value";
+
+// --- LPUSH ---
+
+#[tokio::test]
+async fn test_lpush_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("LPUSH", "list", &["a"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(1));
+}
+
+#[tokio::test]
+async fn test_lpush_accumulates_length() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("LPUSH", "list", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&push_cmd("LPUSH", "list", &["b"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(2));
+}
+
+#[tokio::test]
+async fn test_lpush_multiple_elements() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("LPUSH", "list", &["a", "b", "c"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(3));
+}
+
+#[tokio::test]
+async fn test_lpush_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("LPUSH", "key", &["a"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+// --- RPUSH ---
+
+#[tokio::test]
+async fn test_rpush_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["a"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(1));
+}
+
+#[tokio::test]
+async fn test_rpush_accumulates_length() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["b"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(2));
+}
+
+#[tokio::test]
+async fn test_rpush_multiple_elements() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["a", "b", "c"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(3));
+}
+
+#[tokio::test]
+async fn test_rpush_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "key", &["a"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+// --- LPUSHX ---
+
+#[tokio::test]
+async fn test_lpushx_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("LPUSHX", "list", &["a"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+}
+
+#[tokio::test]
+async fn test_lpushx_existing_list() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("LPUSH", "list", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&push_cmd("LPUSHX", "list", &["b"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(2));
+}
+
+#[tokio::test]
+async fn test_lpushx_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("LPUSHX", "key", &["a"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+// --- RPUSHX ---
+
+#[tokio::test]
+async fn test_rpushx_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSHX", "list", &["a"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+}
+
+#[tokio::test]
+async fn test_rpushx_existing_list() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&push_cmd("RPUSHX", "list", &["b"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(2));
+}
+
+#[tokio::test]
+async fn test_rpushx_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSHX", "key", &["a"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+/// Builds a pop command (LPOP / RPOP) with an optional count.
+fn pop_cmd(cmd: &str, key: &str, count: Option<u64>) -> Vec<u8> {
+    let mut parts = vec![
+        RespValue::BulkString(Some(cmd.to_string())),
+        RespValue::BulkString(Some(key.to_string())),
+    ];
+    if let Some(n) = count {
+        parts.push(RespValue::BulkString(Some(n.to_string())));
+    }
+    resp2::encode(&RespValue::Array(Some(parts)))
+}
+
+// --- LPOP ---
+
+#[tokio::test]
+async fn test_lpop_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&pop_cmd("LPOP", "list", None))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
+async fn test_lpop_without_count_returns_bulk_string() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["a", "b"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&pop_cmd("LPOP", "list", None))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(Some("a".to_string())));
+}
+
+#[tokio::test]
+async fn test_lpop_with_count_returns_array() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&pop_cmd("LPOP", "list", Some(2)))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("a".to_string())),
+            RespValue::BulkString(Some("b".to_string())),
+        ]))
+    );
+}
+
+#[tokio::test]
+async fn test_lpop_removes_key_when_list_exhausted() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&pop_cmd("LPOP", "list", None))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&pop_cmd("LPOP", "list", None))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
+async fn test_lpop_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&pop_cmd("LPOP", "key", None))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+// --- RPOP ---
+
+#[tokio::test]
+async fn test_rpop_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&pop_cmd("RPOP", "list", None))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
+async fn test_rpop_without_count_returns_bulk_string() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["a", "b"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&pop_cmd("RPOP", "list", None))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(Some("b".to_string())));
+}
+
+#[tokio::test]
+async fn test_rpop_with_count_returns_array() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&pop_cmd("RPOP", "list", Some(2)))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("c".to_string())),
+            RespValue::BulkString(Some("b".to_string())),
+        ]))
+    );
+}
+
+#[tokio::test]
+async fn test_rpop_removes_key_when_list_exhausted() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "list", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&pop_cmd("RPOP", "list", None))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&pop_cmd("RPOP", "list", None))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
+async fn test_rpop_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&pop_cmd("RPOP", "key", None))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+// --- LLEN ---
+
+#[tokio::test]
+async fn test_llen_missing_key_returns_zero() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*2\r\n$4\r\nLLEN\r\n$6\r\nmylist\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+}
+
+#[tokio::test]
+async fn test_llen_returns_list_length() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*2\r\n$4\r\nLLEN\r\n$6\r\nmylist\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(3));
+}
+
+#[tokio::test]
+async fn test_llen_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*2\r\n$4\r\nLLEN\r\n$3\r\nkey\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+#[tokio::test]
+async fn test_llen_wrong_arity() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client.write_all(b"*1\r\n$4\r\nLLEN\r\n").await.unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert!(matches!(response, RespValue::SimpleError(_)));
+}
+
+// --- LINDEX ---
+
+#[tokio::test]
+async fn test_lindex_missing_key_returns_nil() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$6\r\nLINDEX\r\n$6\r\nmylist\r\n$1\r\n0\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
+async fn test_lindex_returns_element_at_positive_index() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*3\r\n$6\r\nLINDEX\r\n$6\r\nmylist\r\n$1\r\n1\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(Some("b".to_string())));
+}
+
+#[tokio::test]
+async fn test_lindex_returns_element_at_negative_index() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*3\r\n$6\r\nLINDEX\r\n$6\r\nmylist\r\n$2\r\n-1\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(Some("c".to_string())));
+}
+
+#[tokio::test]
+async fn test_lindex_out_of_bounds_returns_nil() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*3\r\n$6\r\nLINDEX\r\n$6\r\nmylist\r\n$2\r\n99\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
+async fn test_lindex_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$6\r\nLINDEX\r\n$3\r\nkey\r\n$1\r\n0\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+#[tokio::test]
+async fn test_lindex_wrong_arity() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*2\r\n$6\r\nLINDEX\r\n$6\r\nmylist\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert!(matches!(response, RespValue::SimpleError(_)));
+}
+
+// --- LSET ---
+
+#[tokio::test]
+async fn test_lset_sets_element_at_positive_index() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // LSET mylist 1 x
+    client
+        .write_all(b"*4\r\n$4\r\nLSET\r\n$6\r\nmylist\r\n$1\r\n1\r\n$1\r\nx\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+
+    // Verify via LINDEX
+    client
+        .write_all(b"*3\r\n$6\r\nLINDEX\r\n$6\r\nmylist\r\n$1\r\n1\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(Some("x".to_string())));
+}
+
+#[tokio::test]
+async fn test_lset_sets_element_at_negative_index() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // LSET mylist -1 z
+    client
+        .write_all(b"*4\r\n$4\r\nLSET\r\n$6\r\nmylist\r\n$2\r\n-1\r\n$1\r\nz\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::SimpleString("OK".to_string()));
+
+    // Verify via LINDEX
+    client
+        .write_all(b"*3\r\n$6\r\nLINDEX\r\n$6\r\nmylist\r\n$2\r\n-1\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(Some("z".to_string())));
+}
+
+#[tokio::test]
+async fn test_lset_missing_key_returns_error() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // LSET missing 0 x
+    client
+        .write_all(b"*4\r\n$4\r\nLSET\r\n$7\r\nmissing\r\n$1\r\n0\r\n$1\r\nx\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert!(matches!(response, RespValue::SimpleError(_)));
+}
+
+#[tokio::test]
+async fn test_lset_out_of_bounds_returns_error() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // LSET mylist 99 x
+    client
+        .write_all(b"*4\r\n$4\r\nLSET\r\n$6\r\nmylist\r\n$2\r\n99\r\n$1\r\nx\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert!(matches!(response, RespValue::SimpleError(_)));
+}
+
+#[tokio::test]
+async fn test_lset_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // LSET key 0 x
+    client
+        .write_all(b"*4\r\n$4\r\nLSET\r\n$3\r\nkey\r\n$1\r\n0\r\n$1\r\nx\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+#[tokio::test]
+async fn test_lset_wrong_arity() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // LSET mylist 0  (missing element)
+    client
+        .write_all(b"*3\r\n$4\r\nLSET\r\n$6\r\nmylist\r\n$1\r\n0\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert!(matches!(response, RespValue::SimpleError(_)));
+}
+
+// --- LRANGE ---
+
+#[tokio::test]
+async fn test_lrange_missing_key_returns_empty_array() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // LRANGE missing 0 -1
+    client
+        .write_all(b"*4\r\n$6\r\nLRANGE\r\n$7\r\nmissing\r\n$1\r\n0\r\n$2\r\n-1\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Array(Some(vec![])));
+}
+
+#[tokio::test]
+async fn test_lrange_returns_full_range() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // LRANGE mylist 0 -1
+    client
+        .write_all(b"*4\r\n$6\r\nLRANGE\r\n$6\r\nmylist\r\n$1\r\n0\r\n$2\r\n-1\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("a".to_string())),
+            RespValue::BulkString(Some("b".to_string())),
+            RespValue::BulkString(Some("c".to_string())),
+        ]))
+    );
+}
+
+#[tokio::test]
+async fn test_lrange_returns_subset_with_positive_indices() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a", "b", "c", "d"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // LRANGE mylist 1 2
+    client
+        .write_all(b"*4\r\n$6\r\nLRANGE\r\n$6\r\nmylist\r\n$1\r\n1\r\n$1\r\n2\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("b".to_string())),
+            RespValue::BulkString(Some("c".to_string())),
+        ]))
+    );
+}
+
+#[tokio::test]
+async fn test_lrange_returns_subset_with_negative_indices() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a", "b", "c", "d"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // LRANGE mylist -2 -1
+    client
+        .write_all(b"*4\r\n$6\r\nLRANGE\r\n$6\r\nmylist\r\n$2\r\n-2\r\n$2\r\n-1\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("c".to_string())),
+            RespValue::BulkString(Some("d".to_string())),
+        ]))
+    );
+}
+
+#[tokio::test]
+async fn test_lrange_start_greater_than_stop_returns_empty_array() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // LRANGE mylist 2 1
+    client
+        .write_all(b"*4\r\n$6\r\nLRANGE\r\n$6\r\nmylist\r\n$1\r\n2\r\n$1\r\n1\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Array(Some(vec![])));
+}
+
+#[tokio::test]
+async fn test_lrange_clamps_stop_beyond_list_length() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // LRANGE mylist 0 99
+    client
+        .write_all(b"*4\r\n$6\r\nLRANGE\r\n$6\r\nmylist\r\n$1\r\n0\r\n$2\r\n99\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("a".to_string())),
+            RespValue::BulkString(Some("b".to_string())),
+            RespValue::BulkString(Some("c".to_string())),
+        ]))
+    );
+}
+
+#[tokio::test]
+async fn test_lrange_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // LRANGE key 0 -1
+    client
+        .write_all(b"*4\r\n$6\r\nLRANGE\r\n$3\r\nkey\r\n$1\r\n0\r\n$2\r\n-1\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+#[tokio::test]
+async fn test_lrange_wrong_arity() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // LRANGE mylist 0  (missing stop)
+    client
+        .write_all(b"*3\r\n$6\r\nLRANGE\r\n$6\r\nmylist\r\n$1\r\n0\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert!(matches!(response, RespValue::SimpleError(_)));
+}
+
 #[tokio::test]
 async fn test_set_nx_with_ex() {
     let addr = start_handler().await;
@@ -1934,7 +2923,7 @@ async fn test_set_nx_with_ex() {
 #[tokio::test]
 async fn test_set_xx_with_get() {
     let store = Store::new();
-    store.set("foo", "bar".to_string());
+    store.set_string("foo", "bar");
 
     let addr = start_handler_with_store(store).await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
