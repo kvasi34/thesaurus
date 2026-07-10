@@ -1,4 +1,5 @@
 mod list;
+mod set;
 mod string;
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -64,6 +65,8 @@ impl Executor {
             Command::LLen { key } => self.llen(key),
             Command::LIndex { key, index } => self.lindex(key, *index),
             Command::LRange { key, start, stop } => self.lrange(key, *start, *stop),
+            Command::SAdd { key, members } => self.sadd(key, members),
+            Command::SMembers { key } => self.smembers(key),
             Command::Ttl { key } => self.ttl(key),
             Command::ExpireTime { key } => self.expire_time(key),
             Command::PExpireTime { key } => self.pexpire_time(key),

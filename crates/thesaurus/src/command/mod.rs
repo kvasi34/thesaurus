@@ -77,6 +77,10 @@ pub enum Command {
     LIndex { key: String, index: i64 },
     /// Returns the specified elements of the list stored at key.
     LRange { key: String, start: i64, stop: i64 },
+    /// Add the specified members to the set stored at key.
+    SAdd { key: String, members: Vec<String> },
+    /// Returns all the members of the set value stored at key.
+    SMembers { key: String },
     /// Gets the remaining time to live of a key that has a timeout.
     Ttl { key: String },
     /// Returns the absolute Unix timestamp (since January 1, 1970) in seconds at which the given key will expire.
@@ -147,24 +151,28 @@ impl Command {
             "DEL" => Command::parse_keys_command(args, |keys| Command::Delete { keys }),
             "GETDEL" => Command::parse_key_command(args, |key| Command::GetDel { key }),
             "EXISTS" => Command::parse_keys_command(args, |keys| Command::Exists { keys }),
-            "LPUSH" => {
-                Command::parse_push_command(args, |key, elements| Command::LPush { key, elements })
-            }
-            "RPUSH" => {
-                Command::parse_push_command(args, |key, elements| Command::RPush { key, elements })
-            }
-            "LPUSHX" => {
-                Command::parse_push_command(args, |key, elements| Command::LPushX { key, elements })
-            }
-            "RPUSHX" => {
-                Command::parse_push_command(args, |key, elements| Command::RPushX { key, elements })
-            }
+            "LPUSH" => Command::parse_key_with_elements_command(args, |key, elements| {
+                Command::LPush { key, elements }
+            }),
+            "RPUSH" => Command::parse_key_with_elements_command(args, |key, elements| {
+                Command::RPush { key, elements }
+            }),
+            "LPUSHX" => Command::parse_key_with_elements_command(args, |key, elements| {
+                Command::LPushX { key, elements }
+            }),
+            "RPUSHX" => Command::parse_key_with_elements_command(args, |key, elements| {
+                Command::RPushX { key, elements }
+            }),
             "LPOP" => Command::parse_pop_command(args, |key, count| Command::LPop { key, count }),
             "RPOP" => Command::parse_pop_command(args, |key, count| Command::RPop { key, count }),
             "LSET" => Command::parse_lset_command(args),
             "LLEN" => Command::parse_key_command(args, |key| Command::LLen { key }),
             "LINDEX" => Command::parse_lindex_command(args),
             "LRANGE" => Command::parse_lrange_command(args),
+            "SADD" => Command::parse_key_with_elements_command(args, |key, members| {
+                Command::SAdd { key, members }
+            }),
+            "SMEMBERS" => Command::parse_key_command(args, |key| Command::SMembers { key }),
             "TTL" => Command::parse_key_command(args, |key| Command::Ttl { key }),
             "EXPIRETIME" => Command::parse_key_command(args, |key| Command::ExpireTime { key }),
             "PEXPIRETIME" => Command::parse_key_command(args, |key| Command::PExpireTime { key }),
@@ -203,6 +211,7 @@ impl Command {
                 | Command::RPushX { .. }
                 | Command::LPop { .. }
                 | Command::RPop { .. }
+                | Command::SAdd { .. }
                 | Command::Persist { .. }
                 | Command::Expire { .. }
                 | Command::PExpire { .. }
@@ -260,6 +269,31 @@ impl Command {
         }
 
         Ok(make_cmd(keys))
+    }
+
+    /// Helper function to parse the arguments of commands that require a `key` followed by one or
+    /// more `elements` arguments into the `Command` struct.
+    fn parse_key_with_elements_command(
+        args: &[RespValue],
+        make_cmd: fn(String, Vec<String>) -> Command,
+    ) -> Result<Self, HandlerError> {
+        check_min_arity(args, 3)?;
+
+        let key = match &args[1] {
+            RespValue::BulkString(Some(s)) => s.clone(),
+            _ => unreachable!(),
+        };
+
+        let mut elements: Vec<String> = Vec::new();
+        for arg in args.iter().skip(2) {
+            let key = match arg {
+                RespValue::BulkString(Some(s)) => s.clone(),
+                _ => unreachable!(),
+            };
+            elements.push(key);
+        }
+
+        Ok(make_cmd(key, elements))
     }
 
     /// Helper function to parse the arguments of a EXPIRE-like commands into relevant struct.

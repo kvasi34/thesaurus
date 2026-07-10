@@ -1,7 +1,8 @@
 mod list;
+mod set;
 mod string;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::mem;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -13,6 +14,7 @@ use rand::seq::IteratorRandom;
 enum StoreValue {
     Str(String),
     List(VecDeque<String>),
+    Set(HashSet<String>),
 }
 
 /// Shared in-memory key-value store.

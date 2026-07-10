@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use thesaurus::{
     aof::{AofWriter, AppendFSyncMode},
     executor::Executor,
@@ -2935,4 +2937,173 @@ async fn test_set_xx_with_get() {
 
     let response = resp2::decode_async(&mut client).await.unwrap();
     assert_eq!(response, RespValue::BulkString(Some("bar".to_string())));
+}
+
+// --- SADD ---
+
+#[tokio::test]
+async fn test_sadd_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SADD", "myset", &["a"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(1));
+}
+
+#[tokio::test]
+async fn test_sadd_multiple_elements() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SADD", "myset", &["a", "b", "c"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(3));
+}
+
+#[tokio::test]
+async fn test_sadd_dedupes_members_in_same_call() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SADD", "myset", &["a", "a", "b"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(2));
+}
+
+#[tokio::test]
+async fn test_sadd_returns_count_of_newly_added_members() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SADD", "myset", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&push_cmd("SADD", "myset", &["a", "b"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(1));
+}
+
+#[tokio::test]
+async fn test_sadd_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SADD", "key", &["a"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+// --- SMEMBERS ---
+
+/// Unwraps a `RespValue::Array` of bulk strings into a `HashSet` for order-independent
+/// comparison, since SMEMBERS returns members from a `HashSet` in no particular order.
+fn members_set(response: RespValue) -> HashSet<String> {
+    match response {
+        RespValue::Array(Some(items)) => items
+            .into_iter()
+            .map(|item| match item {
+                RespValue::BulkString(Some(s)) => s,
+                other => panic!("expected bulk string, got {other:?}"),
+            })
+            .collect(),
+        other => panic!("expected array, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn test_smembers_missing_key_returns_empty_array() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*2\r\n$8\r\nSMEMBERS\r\n$7\r\nmissing\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Array(Some(vec![])));
+}
+
+#[tokio::test]
+async fn test_smembers_returns_all_members() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SADD", "myset", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*2\r\n$8\r\nSMEMBERS\r\n$5\r\nmyset\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        members_set(response),
+        HashSet::from(["a".to_string(), "b".to_string(), "c".to_string()])
+    );
+}
+
+#[tokio::test]
+async fn test_smembers_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*2\r\n$8\r\nSMEMBERS\r\n$3\r\nkey\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+#[tokio::test]
+async fn test_smembers_wrong_arity() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client.write_all(b"*1\r\n$8\r\nSMEMBERS\r\n").await.unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert!(matches!(response, RespValue::SimpleError(_)));
 }
