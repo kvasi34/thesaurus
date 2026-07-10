@@ -1181,4 +1181,86 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn test_from_resp2_sadd() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SADD", "myset", "a"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::SAdd {
+                key: "myset".to_string(),
+                members: vec!["a".to_string()]
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_sadd_multiple_members() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SADD", "myset", "a", "b", "c"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::SAdd {
+                key: "myset".to_string(),
+                members: vec!["a".to_string(), "b".to_string(), "c".to_string()]
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_sadd_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SADD", "myset"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 3,
+                got: 2
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_smembers() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SMEMBERS", "myset"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::SMembers {
+                key: "myset".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_smembers_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SMEMBERS"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 2,
+                got: 1
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_scard() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SCARD", "myset"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::SCard {
+                key: "myset".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_scard_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SCARD"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 2,
+                got: 1
+            }
+        );
+    }
 }
