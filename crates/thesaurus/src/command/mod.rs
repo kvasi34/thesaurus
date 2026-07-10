@@ -81,6 +81,8 @@ pub enum Command {
     SAdd { key: String, members: Vec<String> },
     /// Returns all the members of the set value stored at key.
     SMembers { key: String },
+    /// Returns the set cardinality (number of elements) of the set stored at key.
+    SCard { key: String },
     /// Gets the remaining time to live of a key that has a timeout.
     Ttl { key: String },
     /// Returns the absolute Unix timestamp (since January 1, 1970) in seconds at which the given key will expire.
@@ -173,6 +175,7 @@ impl Command {
                 Command::SAdd { key, members }
             }),
             "SMEMBERS" => Command::parse_key_command(args, |key| Command::SMembers { key }),
+            "SCARD" => Command::parse_key_command(args, |key| Command::SCard { key }),
             "TTL" => Command::parse_key_command(args, |key| Command::Ttl { key }),
             "EXPIRETIME" => Command::parse_key_command(args, |key| Command::ExpireTime { key }),
             "PEXPIRETIME" => Command::parse_key_command(args, |key| Command::PExpireTime { key }),

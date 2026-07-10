@@ -39,6 +39,17 @@ impl Store {
             Some(_) => Err(StoreError::WrongType),
         }
     }
+
+    /// Return the set cardinality (number of elements) of the set at `key`. Returns 0 if the key
+    /// does not exist. Returns `Err(StoreError::WrongType)` if the key holds a non-set value.
+    pub fn scard(&self, key: &str) -> Result<usize, StoreError> {
+        let guard = self.inner.read().unwrap();
+        match guard.get(key) {
+            None => Ok(0),
+            Some(StoreValue::Set(s)) => Ok(s.len()),
+            Some(_) => Err(StoreError::WrongType),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -159,5 +170,49 @@ mod tests {
         store.sadd("key", vec!["a".to_string()]).unwrap();
         store.set_ttl("key", Instant::now() - Duration::from_secs(1));
         assert_eq!(store.smembers("key"), Ok(Vec::new()));
+    }
+
+    // scard
+    #[test]
+    fn test_scard_returns_zero_on_missing_key() {
+        let store = Store::new();
+        assert_eq!(store.scard("missing"), Ok(0));
+    }
+
+    #[test]
+    fn test_scard_returns_wrongtype_on_non_set_key() {
+        let store = Store::new();
+        store.set("key", StoreValue::Str("val".to_string()));
+        assert_eq!(store.scard("key"), Err(StoreError::WrongType));
+    }
+
+    #[test]
+    fn test_scard_returns_member_count() {
+        let store = Store::new();
+        store
+            .sadd(
+                "key",
+                vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            )
+            .unwrap();
+        assert_eq!(store.scard("key"), Ok(3));
+    }
+
+    #[test]
+    fn test_scard_does_not_count_duplicates() {
+        let store = Store::new();
+        store
+            .sadd("key", vec!["a".to_string(), "a".to_string()])
+            .unwrap();
+        assert_eq!(store.scard("key"), Ok(1));
+    }
+
+    #[test]
+    fn test_scard_returns_zero_on_expired_key() {
+        use std::time::{Duration, Instant};
+        let store = Store::new();
+        store.sadd("key", vec!["a".to_string()]).unwrap();
+        store.set_ttl("key", Instant::now() - Duration::from_secs(1));
+        assert_eq!(store.scard("key"), Ok(0));
     }
 }

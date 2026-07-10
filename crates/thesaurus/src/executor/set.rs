@@ -27,6 +27,15 @@ impl Executor {
             Err(e) => RespValue::SimpleError(e.to_string()),
         }
     }
+
+    /// Handles SCARD: returns the number of members in the set at `key`. Returns 0 if the key
+    /// does not exist. Returns a WRONGTYPE error if the key holds a non-set value.
+    pub(super) fn scard(&self, key: &str) -> RespValue {
+        match self.store.scard(key) {
+            Ok(u) => RespValue::Integer(u as i64),
+            Err(e) => RespValue::SimpleError(e.to_string()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -123,5 +132,33 @@ mod tests {
         let ex = executor();
         ex.store.set_string("key", "val");
         assert!(matches!(ex.smembers("key"), RespValue::SimpleError(_)));
+    }
+
+    // scard
+    #[test]
+    fn test_scard_returns_zero_on_missing_key() {
+        let ex = executor();
+        assert_eq!(ex.scard("missing"), RespValue::Integer(0));
+    }
+
+    #[test]
+    fn test_scard_returns_member_count() {
+        let ex = executor();
+        ex.sadd("key", &els(&["a", "b", "c"]));
+        assert_eq!(ex.scard("key"), RespValue::Integer(3));
+    }
+
+    #[test]
+    fn test_scard_does_not_count_duplicates() {
+        let ex = executor();
+        ex.sadd("key", &els(&["a", "a"]));
+        assert_eq!(ex.scard("key"), RespValue::Integer(1));
+    }
+
+    #[test]
+    fn test_scard_returns_wrongtype_on_non_set_key() {
+        let ex = executor();
+        ex.store.set_string("key", "val");
+        assert!(matches!(ex.scard("key"), RespValue::SimpleError(_)));
     }
 }

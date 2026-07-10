@@ -3107,3 +3107,90 @@ async fn test_smembers_wrong_arity() {
     let response = resp2::decode_async(&mut client).await.unwrap();
     assert!(matches!(response, RespValue::SimpleError(_)));
 }
+
+// --- SCARD ---
+
+#[tokio::test]
+async fn test_scard_missing_key_returns_zero() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*2\r\n$5\r\nSCARD\r\n$7\r\nmissing\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+}
+
+#[tokio::test]
+async fn test_scard_returns_member_count() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SADD", "myset", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*2\r\n$5\r\nSCARD\r\n$5\r\nmyset\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(3));
+}
+
+#[tokio::test]
+async fn test_scard_does_not_count_duplicates() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SADD", "myset", &["a", "a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*2\r\n$5\r\nSCARD\r\n$5\r\nmyset\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(1));
+}
+
+#[tokio::test]
+async fn test_scard_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*2\r\n$5\r\nSCARD\r\n$3\r\nkey\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+#[tokio::test]
+async fn test_scard_wrong_arity() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client.write_all(b"*1\r\n$5\r\nSCARD\r\n").await.unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert!(matches!(response, RespValue::SimpleError(_)));
+}
