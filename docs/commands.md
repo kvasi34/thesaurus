@@ -19,6 +19,11 @@
 | `LINDEX`       | `LINDEX key index`                             | —                                                              |
 | `LSET`         | `LSET key index element`                       | —                                                              |
 | `LRANGE`       | `LRANGE key start stop`                        | —                                                              |
+| `SADD`         | `SADD key member [member …]`                   | —                                                              |
+| `SMEMBERS`     | `SMEMBERS key`                                 | —                                                              |
+| `SCARD`        | `SCARD key`                                    | —                                                              |
+| `SPOP`         | `SPOP key [count]`                             | —                                                              |
+| `SREM`         | `SREM key member [member …]`                   | —                                                              |
 | `EXPIRE`       | `EXPIRE key seconds`                           |                                                                |
 | `PEXPIRE`      | `PEXPIRE key milliseconds`                     |                                                                |
 | `EXPIREAT`     | `EXPIREAT key unix-secs`                       |                                                                |

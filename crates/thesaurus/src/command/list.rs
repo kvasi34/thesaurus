@@ -4,29 +4,6 @@ use crate::resp2::RespValue;
 use super::Command;
 
 impl Command {
-    /// Generic method to parse the arguments of POP commands into relevant enum.
-    pub(super) fn parse_pop_command(
-        args: &[RespValue],
-        make_cmd: fn(String, Option<u64>) -> Command,
-    ) -> Result<Self, HandlerError> {
-        super::check_min_arity(args, 2)?;
-
-        let key = match &args[1] {
-            RespValue::BulkString(Some(s)) => s.clone(),
-            _ => unreachable!(),
-        };
-
-        let count: Option<u64> = match args.get(2) {
-            Some(RespValue::BulkString(Some(s))) => Some(
-                s.parse::<u64>()
-                    .map_err(|_| HandlerError::NotAnInteger(s.clone()))?,
-            ),
-            _ => None,
-        };
-
-        Ok(make_cmd(key, count))
-    }
-
     /// Generic method to parse the arguments of the LSET command into relevant enum.
     pub(super) fn parse_lset_command(args: &[RespValue]) -> Result<Self, HandlerError> {
         super::check_arity(args, 4)?;

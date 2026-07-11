@@ -83,6 +83,10 @@ pub enum Command {
     SMembers { key: String },
     /// Returns the set cardinality (number of elements) of the set stored at key.
     SCard { key: String },
+    /// Removes and returns one or more random members from the set value store at key.
+    SPop { key: String, count: Option<u64> },
+    /// Remove the specified members from the set stored at key.
+    SRem { key: String, members: Vec<String> },
     /// Gets the remaining time to live of a key that has a timeout.
     Ttl { key: String },
     /// Returns the absolute Unix timestamp (since January 1, 1970) in seconds at which the given key will expire.
@@ -176,6 +180,10 @@ impl Command {
             }),
             "SMEMBERS" => Command::parse_key_command(args, |key| Command::SMembers { key }),
             "SCARD" => Command::parse_key_command(args, |key| Command::SCard { key }),
+            "SPOP" => Command::parse_pop_command(args, |key, count| Command::SPop { key, count }),
+            "SREM" => Command::parse_key_with_elements_command(args, |key, members| {
+                Command::SRem { key, members }
+            }),
             "TTL" => Command::parse_key_command(args, |key| Command::Ttl { key }),
             "EXPIRETIME" => Command::parse_key_command(args, |key| Command::ExpireTime { key }),
             "PEXPIRETIME" => Command::parse_key_command(args, |key| Command::PExpireTime { key }),
@@ -215,6 +223,8 @@ impl Command {
                 | Command::LPop { .. }
                 | Command::RPop { .. }
                 | Command::SAdd { .. }
+                | Command::SPop { .. }
+                | Command::SRem { .. }
                 | Command::Persist { .. }
                 | Command::Expire { .. }
                 | Command::PExpire { .. }
@@ -297,6 +307,29 @@ impl Command {
         }
 
         Ok(make_cmd(key, elements))
+    }
+
+    /// Helper function to parse the arguments of POP commands into relevant enum.
+    fn parse_pop_command(
+        args: &[RespValue],
+        make_cmd: fn(String, Option<u64>) -> Command,
+    ) -> Result<Self, HandlerError> {
+        check_min_arity(args, 2)?;
+
+        let key = match &args[1] {
+            RespValue::BulkString(Some(s)) => s.clone(),
+            _ => unreachable!(),
+        };
+
+        let count: Option<u64> = match args.get(2) {
+            Some(RespValue::BulkString(Some(s))) => Some(
+                s.parse::<u64>()
+                    .map_err(|_| HandlerError::NotAnInteger(s.clone()))?,
+            ),
+            _ => None,
+        };
+
+        Ok(make_cmd(key, count))
     }
 
     /// Helper function to parse the arguments of a EXPIRE-like commands into relevant struct.
@@ -1260,6 +1293,84 @@ mod tests {
             HandlerError::WrongArity {
                 expected: 2,
                 got: 1
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_spop() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SPOP", "myset"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::SPop {
+                key: "myset".to_string(),
+                count: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_spop_with_count() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SPOP", "myset", "2"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::SPop {
+                key: "myset".to_string(),
+                count: Some(2),
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_spop_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SPOP"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 2,
+                got: 1
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_spop_count_not_an_integer() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SPOP", "myset", "foo"]));
+        assert!(matches!(cmd.err().unwrap(), HandlerError::NotAnInteger(_)));
+    }
+
+    #[test]
+    fn test_from_resp2_srem() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SREM", "myset", "a"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::SRem {
+                key: "myset".to_string(),
+                members: vec!["a".to_string()]
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_srem_multiple_members() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SREM", "myset", "a", "b", "c"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::SRem {
+                key: "myset".to_string(),
+                members: vec!["a".to_string(), "b".to_string(), "c".to_string()]
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_srem_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SREM", "myset"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 3,
+                got: 2
             }
         );
     }
