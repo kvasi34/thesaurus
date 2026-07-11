@@ -68,6 +68,8 @@ impl Executor {
             Command::SAdd { key, members } => self.sadd(key, members),
             Command::SMembers { key } => self.smembers(key),
             Command::SCard { key } => self.scard(key),
+            Command::SPop { key, count } => self.spop(key, *count),
+            Command::SRem { key, members } => self.srem(key, members),
             Command::Ttl { key } => self.ttl(key),
             Command::ExpireTime { key } => self.expire_time(key),
             Command::PExpireTime { key } => self.pexpire_time(key),

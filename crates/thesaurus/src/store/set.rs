@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use rand::seq::IteratorRandom;
+
 use crate::errors::StoreError;
 
 use super::{Store, StoreValue};
@@ -49,6 +51,57 @@ impl Store {
             Some(StoreValue::Set(s)) => Ok(s.len()),
             Some(_) => Err(StoreError::WrongType),
         }
+    }
+
+    /// Removes and returns up to `count` random, distinct members from the set at `key`. Removes
+    /// the key when the set becomes empty. Returns `Ok(None)` if the key does not exist. Returns
+    /// `Err(StoreError::WrongType)` if the key holds a non-set value.
+    pub fn spop(&self, key: &str, count: Option<u64>) -> Result<Option<Vec<String>>, StoreError> {
+        let mut guard = self.inner.write().unwrap();
+        let set = match guard.get_mut(key) {
+            Some(StoreValue::Set(s)) => s,
+            Some(_) => return Err(StoreError::WrongType),
+            None => return Ok(None),
+        };
+
+        let amount = count.unwrap_or(1) as usize;
+        let popped: Vec<String> = set.iter().cloned().sample(&mut rand::rng(), amount);
+        for member in &popped {
+            set.remove(member);
+        }
+
+        if set.is_empty() {
+            guard.data.remove(key);
+            guard.expiry_index.remove(key);
+        }
+
+        Ok(Some(popped))
+    }
+
+    /// Removes `members` from the set at `key`. Returns the number of members that were removed
+    /// (i.e. that were present). Returns `Ok(0)` if the key does not exist. Returns
+    /// `Err(StoreError::WrongType)` if the key holds a non-set value.
+    pub fn srem(
+        &self,
+        key: &str,
+        members: impl IntoIterator<Item = String>,
+    ) -> Result<usize, StoreError> {
+        let mut guard = self.inner.write().unwrap();
+        let set = match guard.get_mut(key) {
+            Some(StoreValue::Set(s)) => s,
+            Some(_) => return Err(StoreError::WrongType),
+            None => return Ok(0),
+        };
+
+        let mut count = 0usize;
+        for member in members {
+            if set.contains(&member) {
+                count += 1;
+                set.remove(&member);
+            }
+        }
+
+        Ok(count)
     }
 }
 
@@ -214,5 +267,154 @@ mod tests {
         store.sadd("key", vec!["a".to_string()]).unwrap();
         store.set_ttl("key", Instant::now() - Duration::from_secs(1));
         assert_eq!(store.scard("key"), Ok(0));
+    }
+
+    // spop
+    #[test]
+    fn test_spop_returns_none_on_missing_key() {
+        let store = Store::new();
+        assert_eq!(store.spop("missing", None), Ok(None));
+    }
+
+    #[test]
+    fn test_spop_returns_wrongtype_on_non_set_key() {
+        let store = Store::new();
+        store.set("key", StoreValue::Str("val".to_string()));
+        assert_eq!(store.spop("key", None), Err(StoreError::WrongType));
+    }
+
+    #[test]
+    fn test_spop_default_count_removes_one_member() {
+        let store = Store::new();
+        store
+            .sadd(
+                "key",
+                vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            )
+            .unwrap();
+
+        let popped = store.spop("key", None).unwrap().unwrap();
+        assert_eq!(popped.len(), 1);
+        assert!(["a", "b", "c"].contains(&popped[0].as_str()));
+        assert_eq!(store.scard("key"), Ok(2));
+        assert!(!store.smembers("key").unwrap().contains(&popped[0]));
+    }
+
+    #[test]
+    fn test_spop_with_count_removes_multiple_distinct_members() {
+        let store = Store::new();
+        store
+            .sadd(
+                "key",
+                vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            )
+            .unwrap();
+
+        let popped = store.spop("key", Some(2)).unwrap().unwrap();
+        assert_eq!(popped.len(), 2);
+        assert_eq!(popped.iter().cloned().collect::<HashSet<String>>().len(), 2);
+        assert_eq!(store.scard("key"), Ok(1));
+    }
+
+    #[test]
+    fn test_spop_with_count_exceeding_size_removes_all_members() {
+        let store = Store::new();
+        store
+            .sadd("key", vec!["a".to_string(), "b".to_string()])
+            .unwrap();
+
+        let popped = store.spop("key", Some(10)).unwrap().unwrap();
+        assert_eq!(
+            popped.into_iter().collect::<HashSet<String>>(),
+            HashSet::from(["a".to_string(), "b".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_spop_with_zero_count_returns_empty_and_leaves_set_untouched() {
+        let store = Store::new();
+        store.sadd("key", vec!["a".to_string()]).unwrap();
+        assert_eq!(store.spop("key", Some(0)), Ok(Some(Vec::new())));
+        assert_eq!(store.scard("key"), Ok(1));
+    }
+
+    #[test]
+    fn test_spop_deletes_key_when_set_becomes_empty() {
+        let store = Store::new();
+        store.sadd("key", vec!["a".to_string()]).unwrap();
+        store.spop("key", None).unwrap();
+        assert!(!store.exists("key"));
+    }
+
+    #[test]
+    fn test_spop_returns_none_on_expired_key() {
+        use std::time::{Duration, Instant};
+        let store = Store::new();
+        store.sadd("key", vec!["a".to_string()]).unwrap();
+        store.set_ttl("key", Instant::now() - Duration::from_secs(1));
+        assert_eq!(store.spop("key", None), Ok(None));
+    }
+
+    // srem
+    #[test]
+    fn test_srem_returns_zero_on_missing_key() {
+        let store = Store::new();
+        assert_eq!(store.srem("missing", vec!["a".to_string()]), Ok(0));
+    }
+
+    #[test]
+    fn test_srem_returns_wrongtype_on_non_set_key() {
+        let store = Store::new();
+        store.set("key", StoreValue::Str("val".to_string()));
+        assert_eq!(
+            store.srem("key", vec!["a".to_string()]),
+            Err(StoreError::WrongType)
+        );
+    }
+
+    #[test]
+    fn test_srem_removes_present_members() {
+        let store = Store::new();
+        store
+            .sadd(
+                "key",
+                vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            )
+            .unwrap();
+
+        assert_eq!(
+            store.srem("key", vec!["a".to_string(), "b".to_string()]),
+            Ok(2)
+        );
+        assert_eq!(store.smembers("key"), Ok(vec!["c".to_string()]));
+    }
+
+    #[test]
+    fn test_srem_only_counts_members_that_were_present() {
+        let store = Store::new();
+        store.sadd("key", vec!["a".to_string()]).unwrap();
+        assert_eq!(
+            store.srem("key", vec!["a".to_string(), "b".to_string()]),
+            Ok(1)
+        );
+    }
+
+    #[test]
+    fn test_srem_does_not_delete_key_when_set_is_non_empty() {
+        let store = Store::new();
+        store
+            .sadd("key", vec!["a".to_string(), "b".to_string()])
+            .unwrap();
+        store.srem("key", vec!["a".to_string()]).unwrap();
+        assert!(store.exists("key"));
+    }
+
+    #[test]
+    fn test_srem_returns_zero_on_expired_key() {
+        use std::time::{Duration, Instant};
+        let store = Store::new();
+        store.sadd("key", vec!["a".to_string()]).unwrap();
+        store.set_ttl("key", Instant::now() - Duration::from_secs(1));
+        assert_eq!(store.srem("key", vec!["a".to_string()]), Ok(0));
     }
 }

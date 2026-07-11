@@ -18,10 +18,10 @@ impl Executor {
     /// error if the key holds a non-set value.
     pub(super) fn smembers(&self, key: &str) -> RespValue {
         match self.store.smembers(key) {
-            Ok(elements) => RespValue::Array(Some(
-                elements
+            Ok(members) => RespValue::Array(Some(
+                members
                     .into_iter()
-                    .map(|element| RespValue::BulkString(Some(element)))
+                    .map(|member| RespValue::BulkString(Some(member)))
                     .collect::<Vec<RespValue>>(),
             )),
             Err(e) => RespValue::SimpleError(e.to_string()),
@@ -32,6 +32,46 @@ impl Executor {
     /// does not exist. Returns a WRONGTYPE error if the key holds a non-set value.
     pub(super) fn scard(&self, key: &str) -> RespValue {
         match self.store.scard(key) {
+            Ok(u) => RespValue::Integer(u as i64),
+            Err(e) => RespValue::SimpleError(e.to_string()),
+        }
+    }
+
+    /// Handles SPOP: removes and returns one or more random members from the set at `key`.
+    /// Without a count, returns a single bulk string (or nil if the key does not exist); with a
+    /// count, returns an array (an empty array if the key does not exist, fewer elements if the
+    /// set has fewer members than `count`, and the key is removed once the set becomes empty).
+    /// Returns a WRONGTYPE error if the key holds a non-set value.
+    pub(super) fn spop(&self, key: &str, count: Option<u64>) -> RespValue {
+        match self.store.spop(key, count) {
+            Ok(None) => {
+                if count.is_some() {
+                    return RespValue::Array(Some(Vec::new()));
+                }
+
+                RespValue::BulkString(None)
+            }
+            Ok(Some(mut members)) => {
+                if count.is_some() {
+                    return RespValue::Array(Some(
+                        members
+                            .into_iter()
+                            .map(|member| RespValue::BulkString(Some(member)))
+                            .collect::<Vec<RespValue>>(),
+                    ));
+                }
+
+                RespValue::BulkString(members.pop())
+            }
+            Err(e) => RespValue::SimpleError(e.to_string()),
+        }
+    }
+
+    /// Handles SREM: removes each member in `members` from the set at `key`. Returns the number
+    /// of members that were removed (i.e. that were present). Returns a WRONGTYPE error if the
+    /// key holds a non-set value.
+    pub(super) fn srem(&self, key: &str, members: &[String]) -> RespValue {
+        match self.store.srem(key, members.iter().cloned()) {
             Ok(u) => RespValue::Integer(u as i64),
             Err(e) => RespValue::SimpleError(e.to_string()),
         }
@@ -160,5 +200,113 @@ mod tests {
         let ex = executor();
         ex.store.set_string("key", "val");
         assert!(matches!(ex.scard("key"), RespValue::SimpleError(_)));
+    }
+
+    // spop
+    #[test]
+    fn test_spop_returns_nil_on_missing_key() {
+        let ex = executor();
+        assert_eq!(ex.spop("missing", None), RespValue::BulkString(None));
+    }
+
+    #[test]
+    fn test_spop_returns_wrongtype_on_non_set_key() {
+        let ex = executor();
+        ex.store.set_string("key", "val");
+        assert!(matches!(ex.spop("key", None), RespValue::SimpleError(_)));
+    }
+
+    #[test]
+    fn test_spop_without_count_returns_single_bulk_string() {
+        let ex = executor();
+        ex.sadd("key", &els(&["a", "b", "c"]));
+
+        let popped = match ex.spop("key", None) {
+            RespValue::BulkString(Some(s)) => s,
+            other => panic!("expected bulk string, got {other:?}"),
+        };
+        assert!(["a", "b", "c"].contains(&popped.as_str()));
+        assert_eq!(ex.scard("key"), RespValue::Integer(2));
+    }
+
+    #[test]
+    fn test_spop_with_count_returns_array() {
+        let ex = executor();
+        ex.sadd("key", &els(&["a", "b", "c"]));
+
+        let popped = members_of(ex.spop("key", Some(2)));
+        assert_eq!(popped.len(), 2);
+        assert_eq!(ex.scard("key"), RespValue::Integer(1));
+    }
+
+    #[test]
+    fn test_spop_with_count_exceeding_size_returns_all_members() {
+        let ex = executor();
+        ex.sadd("key", &els(&["a", "b"]));
+
+        assert_eq!(
+            members_of(ex.spop("key", Some(10))),
+            HashSet::from(["a".to_string(), "b".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_spop_with_zero_count_returns_empty_array() {
+        let ex = executor();
+        ex.sadd("key", &els(&["a"]));
+        assert_eq!(ex.spop("key", Some(0)), RespValue::Array(Some(Vec::new())));
+        assert_eq!(ex.scard("key"), RespValue::Integer(1));
+    }
+
+    #[test]
+    fn test_spop_with_count_on_missing_key_returns_empty_array() {
+        let ex = executor();
+        assert_eq!(
+            ex.spop("missing", Some(1)),
+            RespValue::Array(Some(Vec::new()))
+        );
+    }
+
+    #[test]
+    fn test_spop_deletes_key_when_set_becomes_empty() {
+        let ex = executor();
+        ex.sadd("key", &els(&["a"]));
+        ex.spop("key", None);
+        assert_eq!(ex.scard("key"), RespValue::Integer(0));
+    }
+
+    // srem
+    #[test]
+    fn test_srem_returns_zero_on_missing_key() {
+        let ex = executor();
+        assert_eq!(ex.srem("missing", &els(&["a"])), RespValue::Integer(0));
+    }
+
+    #[test]
+    fn test_srem_returns_wrongtype_on_non_set_key() {
+        let ex = executor();
+        ex.store.set_string("key", "val");
+        assert!(matches!(
+            ex.srem("key", &els(&["a"])),
+            RespValue::SimpleError(_)
+        ));
+    }
+
+    #[test]
+    fn test_srem_removes_present_members_and_returns_count() {
+        let ex = executor();
+        ex.sadd("key", &els(&["a", "b", "c"]));
+        assert_eq!(ex.srem("key", &els(&["a", "b"])), RespValue::Integer(2));
+        assert_eq!(
+            members_of(ex.smembers("key")),
+            HashSet::from(["c".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_srem_only_counts_members_that_were_present() {
+        let ex = executor();
+        ex.sadd("key", &els(&["a"]));
+        assert_eq!(ex.srem("key", &els(&["a", "b"])), RespValue::Integer(1));
     }
 }
