@@ -114,7 +114,7 @@ Implementation status of every Redis 8.8 command, grouped by data type.
 | `SISMEMBER` | Determines whether a member belongs to a set | | ✓ | |
 | `SMEMBERS` | Returns all members of a set | ✓ | | |
 | `SMISMEMBER` | Determines whether multiple members belong to a set | | ✓ | |
-| `SMOVE` | Moves a member from one set to another atomically | | ✓ | |
+| `SMOVE` | Moves a member from one set to another atomically | ✓ | | |
 | `SPOP` | Removes and returns one or more random members from a set | ✓ | | |
 | `SRANDMEMBER` | Returns one or more random members from a set without removing them | | ✓ | |
 | `SREM` | Removes one or more members from a set | ✓ | | |

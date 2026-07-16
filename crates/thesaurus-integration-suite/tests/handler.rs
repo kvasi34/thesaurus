@@ -3195,6 +3195,212 @@ async fn test_scard_wrong_arity() {
     assert!(matches!(response, RespValue::SimpleError(_)));
 }
 
+// --- SMOVE ---
+
+/// Builds an SMOVE command with a source key, destination key, and member.
+fn smove_cmd(source: &str, destination: &str, member: &str) -> Vec<u8> {
+    resp2::encode(&RespValue::Array(Some(vec![
+        RespValue::BulkString(Some("SMOVE".to_string())),
+        RespValue::BulkString(Some(source.to_string())),
+        RespValue::BulkString(Some(destination.to_string())),
+        RespValue::BulkString(Some(member.to_string())),
+    ])))
+}
+
+#[tokio::test]
+async fn test_smove_missing_source_returns_zero() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SADD", "dst", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&smove_cmd("missing", "dst", "a"))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+}
+
+#[tokio::test]
+async fn test_smove_member_not_in_source_returns_zero() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SADD", "src", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&smove_cmd("src", "dst", "b"))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+}
+
+#[tokio::test]
+async fn test_smove_moves_member_and_creates_destination() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SADD", "src", &["a", "b"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&smove_cmd("src", "dst", "a"))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(1));
+
+    client
+        .write_all(b"*2\r\n$8\r\nSMEMBERS\r\n$3\r\nsrc\r\n")
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(members_set(response), HashSet::from(["b".to_string()]));
+
+    client
+        .write_all(b"*2\r\n$8\r\nSMEMBERS\r\n$3\r\ndst\r\n")
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(members_set(response), HashSet::from(["a".to_string()]));
+}
+
+#[tokio::test]
+async fn test_smove_moves_member_to_existing_destination_set() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SADD", "src", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&push_cmd("SADD", "dst", &["b"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&smove_cmd("src", "dst", "a"))
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(1));
+
+    client
+        .write_all(b"*2\r\n$8\r\nSMEMBERS\r\n$3\r\ndst\r\n")
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        members_set(response),
+        HashSet::from(["a".to_string(), "b".to_string()])
+    );
+}
+
+#[tokio::test]
+async fn test_smove_removes_source_key_when_set_exhausted() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SADD", "src", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&smove_cmd("src", "dst", "a"))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*2\r\n$5\r\nSCARD\r\n$3\r\nsrc\r\n")
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+}
+
+#[tokio::test]
+async fn test_smove_wrongtype_source() {
+    let store = Store::new();
+    store.set_string("src", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&smove_cmd("src", "dst", "a"))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+#[tokio::test]
+async fn test_smove_wrongtype_destination() {
+    let store = Store::new();
+    store.set_string("dst", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SADD", "src", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&smove_cmd("src", "dst", "a"))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+#[tokio::test]
+async fn test_smove_wrong_arity() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*2\r\n$5\r\nSMOVE\r\n$3\r\nsrc\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert!(matches!(response, RespValue::SimpleError(_)));
+}
+
 // --- SPOP ---
 
 #[tokio::test]

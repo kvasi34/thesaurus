@@ -1,4 +1,5 @@
 mod list;
+mod set;
 mod string;
 
 use crate::errors::HandlerError;
@@ -83,9 +84,15 @@ pub enum Command {
     SMembers { key: String },
     /// Returns the set cardinality (number of elements) of the set stored at key.
     SCard { key: String },
+    /// Moves member from the set at source to the set at destination.
+    SMove {
+        source: String,
+        destination: String,
+        member: String,
+    },
     /// Removes and returns one or more random members from the set value store at key.
     SPop { key: String, count: Option<u64> },
-    /// Remove the specified members from the set stored at key.
+    /// Removes the specified members from the set stored at key.
     SRem { key: String, members: Vec<String> },
     /// Gets the remaining time to live of a key that has a timeout.
     Ttl { key: String },
@@ -180,6 +187,7 @@ impl Command {
             }),
             "SMEMBERS" => Command::parse_key_command(args, |key| Command::SMembers { key }),
             "SCARD" => Command::parse_key_command(args, |key| Command::SCard { key }),
+            "SMOVE" => Command::parse_smove_command(args),
             "SPOP" => Command::parse_pop_command(args, |key, count| Command::SPop { key, count }),
             "SREM" => Command::parse_key_with_elements_command(args, |key, members| {
                 Command::SRem { key, members }
@@ -223,6 +231,7 @@ impl Command {
                 | Command::LPop { .. }
                 | Command::RPop { .. }
                 | Command::SAdd { .. }
+                | Command::SMove { .. }
                 | Command::SPop { .. }
                 | Command::SRem { .. }
                 | Command::Persist { .. }
