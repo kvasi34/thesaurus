@@ -22,6 +22,7 @@
 | `SADD`         | `SADD key member [member …]`                   | —                                                              |
 | `SMEMBERS`     | `SMEMBERS key`                                 | —                                                              |
 | `SCARD`        | `SCARD key`                                    | —                                                              |
+| `SMOVE`        | `SMOVE source destination member`              | —                                                              |
 | `SPOP`         | `SPOP key [count]`                             | —                                                              |
 | `SREM`         | `SREM key member [member …]`                   | —                                                              |
 | `EXPIRE`       | `EXPIRE key seconds`                           |                                                                |

@@ -37,6 +37,17 @@ impl Executor {
         }
     }
 
+    /// Handles SMOVE: moves `member` from the set at `source` to the set at `destination`,
+    /// creating `destination` if it does not exist. Returns 1 if the member was moved. Returns 0
+    /// without modifying either key if `source` does not exist or does not contain `member`.
+    /// Returns a WRONGTYPE error if `source` or `destination` holds a non-set value.
+    pub(super) fn smove(&self, source: &str, destination: &str, member: &str) -> RespValue {
+        match self.store.smove(source, destination, member.to_string()) {
+            Ok(b) => RespValue::Integer(b as i64),
+            Err(e) => RespValue::SimpleError(e.to_string()),
+        }
+    }
+
     /// Handles SPOP: removes and returns one or more random members from the set at `key`.
     /// Without a count, returns a single bulk string (or nil if the key does not exist); with a
     /// count, returns an array (an empty array if the key does not exist, fewer elements if the
@@ -200,6 +211,57 @@ mod tests {
         let ex = executor();
         ex.store.set_string("key", "val");
         assert!(matches!(ex.scard("key"), RespValue::SimpleError(_)));
+    }
+
+    // smove
+    #[test]
+    fn test_smove_returns_zero_on_missing_source() {
+        let ex = executor();
+        ex.sadd("dst", &els(&["a"]));
+        assert_eq!(ex.smove("missing", "dst", "a"), RespValue::Integer(0));
+    }
+
+    #[test]
+    fn test_smove_returns_zero_when_member_not_in_source() {
+        let ex = executor();
+        ex.sadd("src", &els(&["a"]));
+        assert_eq!(ex.smove("src", "dst", "b"), RespValue::Integer(0));
+    }
+
+    #[test]
+    fn test_smove_returns_wrongtype_on_non_set_source() {
+        let ex = executor();
+        ex.store.set_string("src", "val");
+        assert!(matches!(
+            ex.smove("src", "dst", "a"),
+            RespValue::SimpleError(_)
+        ));
+    }
+
+    #[test]
+    fn test_smove_returns_wrongtype_on_non_set_destination() {
+        let ex = executor();
+        ex.sadd("src", &els(&["a"]));
+        ex.store.set_string("dst", "val");
+        assert!(matches!(
+            ex.smove("src", "dst", "a"),
+            RespValue::SimpleError(_)
+        ));
+    }
+
+    #[test]
+    fn test_smove_moves_member_and_returns_one() {
+        let ex = executor();
+        ex.sadd("src", &els(&["a", "b"]));
+        assert_eq!(ex.smove("src", "dst", "a"), RespValue::Integer(1));
+        assert_eq!(
+            members_of(ex.smembers("src")),
+            HashSet::from(["b".to_string()])
+        );
+        assert_eq!(
+            members_of(ex.smembers("dst")),
+            HashSet::from(["a".to_string()])
+        );
     }
 
     // spop

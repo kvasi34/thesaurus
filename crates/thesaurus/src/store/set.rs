@@ -53,6 +53,65 @@ impl Store {
         }
     }
 
+    /// Moves `member` from the set at `source` to the set at `destination`, creating
+    /// `destination` if it does not exist. Returns `Ok(true)` if the member was moved. Returns
+    /// `Ok(false)` without modifying either key if `source` does not exist or does not contain
+    /// `member`. Returns `Err(StoreError::WrongType)` if `source` or `destination` holds a
+    /// non-set value.
+    pub fn smove(
+        &self,
+        source: &str,
+        destination: &str,
+        member: String,
+    ) -> Result<bool, StoreError> {
+        let mut guard = self.inner.write().unwrap();
+
+        // Validate types and membership
+        let has_member = match guard.get(source) {
+            None => return Ok(false),
+            Some(StoreValue::Set(s)) => s.contains(&member),
+            Some(_) => return Err(StoreError::WrongType),
+        };
+
+        match guard.get(destination) {
+            None | Some(StoreValue::Set(_)) => {}
+            Some(_) => return Err(StoreError::WrongType),
+        };
+
+        if !has_member {
+            return Ok(false);
+        }
+
+        // Remove member from source
+        match guard.get_mut(source) {
+            Some(StoreValue::Set(s)) => {
+                s.remove(&member);
+                if s.is_empty() {
+                    guard.data.remove(source);
+                    guard.expiry_index.remove(source);
+                }
+            }
+            _ => unreachable!("source type was already checked above"),
+        }
+
+        // Insert member to destination
+        match guard.get_mut(destination) {
+            None => {
+                guard.expiry_index.remove(destination);
+                guard.data.insert(
+                    destination.to_string(),
+                    StoreValue::Set(HashSet::from([member])),
+                );
+            }
+            Some(StoreValue::Set(s)) => {
+                s.insert(member);
+            }
+            Some(_) => unreachable!("source type was already checked above"),
+        }
+
+        Ok(true)
+    }
+
     /// Removes and returns up to `count` random, distinct members from the set at `key`. Removes
     /// the key when the set becomes empty. Returns `Ok(None)` if the key does not exist. Returns
     /// `Err(StoreError::WrongType)` if the key holds a non-set value.
@@ -267,6 +326,121 @@ mod tests {
         store.sadd("key", vec!["a".to_string()]).unwrap();
         store.set_ttl("key", Instant::now() - Duration::from_secs(1));
         assert_eq!(store.scard("key"), Ok(0));
+    }
+
+    // smove
+    #[test]
+    fn test_smove_returns_false_on_missing_source() {
+        let store = Store::new();
+        store.sadd("dst", vec!["a".to_string()]).unwrap();
+        assert_eq!(store.smove("missing", "dst", "a".to_string()), Ok(false));
+        assert_eq!(store.smembers("dst"), Ok(vec!["a".to_string()]));
+    }
+
+    #[test]
+    fn test_smove_returns_false_when_member_not_in_source() {
+        let store = Store::new();
+        store.sadd("src", vec!["a".to_string()]).unwrap();
+        assert_eq!(store.smove("src", "dst", "b".to_string()), Ok(false));
+        assert_eq!(store.smembers("src"), Ok(vec!["a".to_string()]));
+        assert!(!store.exists("dst"));
+    }
+
+    #[test]
+    fn test_smove_returns_wrongtype_on_non_set_source() {
+        let store = Store::new();
+        store.set("src", StoreValue::Str("val".to_string()));
+        assert_eq!(
+            store.smove("src", "dst", "a".to_string()),
+            Err(StoreError::WrongType)
+        );
+    }
+
+    #[test]
+    fn test_smove_returns_wrongtype_on_non_set_destination() {
+        let store = Store::new();
+        store.sadd("src", vec!["a".to_string()]).unwrap();
+        store.set("dst", StoreValue::Str("val".to_string()));
+        assert_eq!(
+            store.smove("src", "dst", "a".to_string()),
+            Err(StoreError::WrongType)
+        );
+        assert_eq!(store.smembers("src"), Ok(vec!["a".to_string()]));
+    }
+
+    #[test]
+    fn test_smove_creates_destination_and_moves_member() {
+        let store = Store::new();
+        store
+            .sadd("src", vec!["a".to_string(), "b".to_string()])
+            .unwrap();
+        assert_eq!(store.smove("src", "dst", "a".to_string()), Ok(true));
+        assert_eq!(store.smembers("src"), Ok(vec!["b".to_string()]));
+        assert_eq!(store.smembers("dst"), Ok(vec!["a".to_string()]));
+    }
+
+    #[test]
+    fn test_smove_moves_member_to_existing_destination_set() {
+        let store = Store::new();
+        store.sadd("src", vec!["a".to_string()]).unwrap();
+        store.sadd("dst", vec!["b".to_string()]).unwrap();
+        assert_eq!(store.smove("src", "dst", "a".to_string()), Ok(true));
+        assert!(!store.exists("src"));
+        assert_eq!(
+            store
+                .smembers("dst")
+                .unwrap()
+                .into_iter()
+                .collect::<HashSet<String>>(),
+            HashSet::from(["a".to_string(), "b".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_smove_does_not_duplicate_member_already_in_destination() {
+        let store = Store::new();
+        store.sadd("src", vec!["a".to_string()]).unwrap();
+        store.sadd("dst", vec!["a".to_string()]).unwrap();
+        assert_eq!(store.smove("src", "dst", "a".to_string()), Ok(true));
+        assert!(!store.exists("src"));
+        assert_eq!(store.smembers("dst"), Ok(vec!["a".to_string()]));
+    }
+
+    #[test]
+    fn test_smove_deletes_source_key_when_set_becomes_empty() {
+        let store = Store::new();
+        store.sadd("src", vec!["a".to_string()]).unwrap();
+        assert_eq!(store.smove("src", "dst", "a".to_string()), Ok(true));
+        assert!(!store.exists("src"));
+    }
+
+    #[test]
+    fn test_smove_does_not_delete_source_key_when_set_is_non_empty() {
+        let store = Store::new();
+        store
+            .sadd("src", vec!["a".to_string(), "b".to_string()])
+            .unwrap();
+        store.smove("src", "dst", "a".to_string()).unwrap();
+        assert!(store.exists("src"));
+        assert_eq!(store.smembers("src"), Ok(vec!["b".to_string()]));
+    }
+
+    #[test]
+    fn test_smove_within_same_key_keeps_member_and_returns_true() {
+        let store = Store::new();
+        store.sadd("key", vec!["a".to_string()]).unwrap();
+        assert_eq!(store.smove("key", "key", "a".to_string()), Ok(true));
+        assert_eq!(store.smembers("key"), Ok(vec!["a".to_string()]));
+    }
+
+    #[test]
+    fn test_smove_returns_false_on_expired_source() {
+        use std::time::{Duration, Instant};
+        let store = Store::new();
+        store.sadd("src", vec!["a".to_string()]).unwrap();
+        store.set_ttl("src", Instant::now() - Duration::from_secs(1));
+        assert_eq!(store.smove("src", "dst", "a".to_string()), Ok(false));
+        assert!(!store.exists("dst"));
     }
 
     // spop
