@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use rand::RngExt;
 use rand::seq::IteratorRandom;
 
 use crate::errors::StoreError;
@@ -38,6 +39,59 @@ impl Store {
         match guard.get(key) {
             None => Ok(Vec::with_capacity(0)),
             Some(StoreValue::Set(s)) => Ok(s.iter().cloned().collect::<Vec<String>>()),
+            Some(_) => Err(StoreError::WrongType),
+        }
+    }
+
+    /// Returns if member is a member of the set stored at key.
+    pub fn sismember(&self, key: &str, member: String) -> Result<bool, StoreError> {
+        Ok(self.smembers(key)?.contains(&member))
+    }
+
+    /// For every member, 1 is returned if the value is a member of the set,
+    /// or 0 if the element is not a member of the set or if key does not exist.
+    pub fn smismember(&self, key: &str, members: Vec<String>) -> Result<Vec<bool>, StoreError> {
+        let guard = self.inner.read().unwrap();
+        match guard.get(key) {
+            None => Ok(vec![false; members.len()]),
+            Some(StoreValue::Set(s)) => Ok(members
+                .iter()
+                .map(|member| s.contains(member))
+                .collect::<Vec<bool>>()),
+            Some(_) => Err(StoreError::WrongType),
+        }
+    }
+
+    /// Returns up to `count` random members from the set at `key` (defaulting to a single member
+    /// if `count` is `None`). Without repetition, returns up to `count` distinct members — fewer
+    /// if the set has fewer members than `count`. With repetition, returns exactly `count`
+    /// members, allowing duplicates. Returns an empty vector if `key` does not exist. Returns
+    /// `Err(StoreError::WrongType)` if the key holds a non-set value.
+    pub fn srandmember(
+        &self,
+        key: &str,
+        count: Option<usize>,
+        allow_repetition: bool,
+    ) -> Result<Vec<String>, StoreError> {
+        let guard = self.inner.read().unwrap();
+        match guard.get(key) {
+            None => Ok(Vec::new()),
+            Some(StoreValue::Set(s)) => {
+                let amount = count.unwrap_or(1);
+                let mut rng = rand::rng();
+
+                if allow_repetition {
+                    if s.is_empty() {
+                        return Ok(Vec::new());
+                    }
+                    let members: Vec<&String> = s.iter().collect();
+                    Ok((0..amount)
+                        .map(|_| members[rng.random_range(0..members.len())].clone())
+                        .collect())
+                } else {
+                    Ok(s.iter().cloned().sample(&mut rng, amount))
+                }
+            }
             Some(_) => Err(StoreError::WrongType),
         }
     }
@@ -282,6 +336,187 @@ mod tests {
         store.sadd("key", vec!["a".to_string()]).unwrap();
         store.set_ttl("key", Instant::now() - Duration::from_secs(1));
         assert_eq!(store.smembers("key"), Ok(Vec::new()));
+    }
+
+    // sismember
+    #[test]
+    fn test_sismember_returns_false_on_missing_key() {
+        let store = Store::new();
+        assert_eq!(store.sismember("missing", "a".to_string()), Ok(false));
+    }
+
+    #[test]
+    fn test_sismember_returns_wrongtype_on_non_set_key() {
+        let store = Store::new();
+        store.set("key", StoreValue::Str("val".to_string()));
+        assert_eq!(
+            store.sismember("key", "a".to_string()),
+            Err(StoreError::WrongType)
+        );
+    }
+
+    #[test]
+    fn test_sismember_returns_true_when_member_present() {
+        let store = Store::new();
+        store.sadd("key", vec!["a".to_string()]).unwrap();
+        assert_eq!(store.sismember("key", "a".to_string()), Ok(true));
+    }
+
+    #[test]
+    fn test_sismember_returns_false_when_member_absent() {
+        let store = Store::new();
+        store.sadd("key", vec!["a".to_string()]).unwrap();
+        assert_eq!(store.sismember("key", "b".to_string()), Ok(false));
+    }
+
+    #[test]
+    fn test_sismember_returns_false_on_expired_key() {
+        use std::time::{Duration, Instant};
+        let store = Store::new();
+        store.sadd("key", vec!["a".to_string()]).unwrap();
+        store.set_ttl("key", Instant::now() - Duration::from_secs(1));
+        assert_eq!(store.sismember("key", "a".to_string()), Ok(false));
+    }
+
+    // smismember
+    #[test]
+    fn test_smismember_returns_all_false_on_missing_key() {
+        let store = Store::new();
+        assert_eq!(
+            store.smismember("missing", vec!["a".to_string(), "b".to_string()]),
+            Ok(vec![false, false])
+        );
+    }
+
+    #[test]
+    fn test_smismember_returns_wrongtype_on_non_set_key() {
+        let store = Store::new();
+        store.set("key", StoreValue::Str("val".to_string()));
+        assert_eq!(
+            store.smismember("key", vec!["a".to_string()]),
+            Err(StoreError::WrongType)
+        );
+    }
+
+    #[test]
+    fn test_smismember_returns_flag_per_member() {
+        let store = Store::new();
+        store
+            .sadd("key", vec!["a".to_string(), "b".to_string()])
+            .unwrap();
+        assert_eq!(
+            store.smismember(
+                "key",
+                vec!["a".to_string(), "c".to_string(), "b".to_string()]
+            ),
+            Ok(vec![true, false, true])
+        );
+    }
+
+    #[test]
+    fn test_smismember_returns_all_false_on_expired_key() {
+        use std::time::{Duration, Instant};
+        let store = Store::new();
+        store.sadd("key", vec!["a".to_string()]).unwrap();
+        store.set_ttl("key", Instant::now() - Duration::from_secs(1));
+        assert_eq!(
+            store.smismember("key", vec!["a".to_string()]),
+            Ok(vec![false])
+        );
+    }
+
+    // srandmember
+    #[test]
+    fn test_srandmember_returns_empty_on_missing_key() {
+        let store = Store::new();
+        assert_eq!(store.srandmember("missing", None, false), Ok(Vec::new()));
+        assert_eq!(store.srandmember("missing", Some(3), false), Ok(Vec::new()));
+        assert_eq!(store.srandmember("missing", Some(3), true), Ok(Vec::new()));
+    }
+
+    #[test]
+    fn test_srandmember_returns_wrongtype_on_non_set_key() {
+        let store = Store::new();
+        store.set("key", StoreValue::Str("val".to_string()));
+        assert_eq!(
+            store.srandmember("key", None, false),
+            Err(StoreError::WrongType)
+        );
+    }
+
+    #[test]
+    fn test_srandmember_without_count_returns_single_member() {
+        let store = Store::new();
+        store
+            .sadd(
+                "key",
+                vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            )
+            .unwrap();
+
+        let result = store.srandmember("key", None, false).unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(["a", "b", "c"].contains(&result[0].as_str()));
+        // srandmember does not remove the member
+        assert_eq!(store.scard("key"), Ok(3));
+    }
+
+    #[test]
+    fn test_srandmember_with_count_returns_distinct_members() {
+        let store = Store::new();
+        store
+            .sadd(
+                "key",
+                vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            )
+            .unwrap();
+
+        let result = store.srandmember("key", Some(2), false).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result.iter().cloned().collect::<HashSet<String>>().len(), 2);
+        assert_eq!(store.scard("key"), Ok(3));
+    }
+
+    #[test]
+    fn test_srandmember_with_count_exceeding_size_returns_all_distinct_members() {
+        let store = Store::new();
+        store
+            .sadd("key", vec!["a".to_string(), "b".to_string()])
+            .unwrap();
+
+        let result = store.srandmember("key", Some(10), false).unwrap();
+        assert_eq!(
+            result.into_iter().collect::<HashSet<String>>(),
+            HashSet::from(["a".to_string(), "b".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_srandmember_with_zero_count_returns_empty() {
+        let store = Store::new();
+        store.sadd("key", vec!["a".to_string()]).unwrap();
+        assert_eq!(store.srandmember("key", Some(0), false), Ok(Vec::new()));
+    }
+
+    #[test]
+    fn test_srandmember_with_repetition_and_count_exceeding_size_allows_duplicates() {
+        let store = Store::new();
+        store.sadd("key", vec!["a".to_string()]).unwrap();
+
+        let result = store.srandmember("key", Some(5), true).unwrap();
+        assert_eq!(result, vec!["a".to_string(); 5]);
+    }
+
+    #[test]
+    fn test_srandmember_with_repetition_returns_only_existing_members() {
+        let store = Store::new();
+        store
+            .sadd("key", vec!["a".to_string(), "b".to_string()])
+            .unwrap();
+
+        let result = store.srandmember("key", Some(10), true).unwrap();
+        assert_eq!(result.len(), 10);
+        assert!(result.iter().all(|m| m == "a" || m == "b"));
     }
 
     // scard

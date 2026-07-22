@@ -21,6 +21,9 @@
 | `LRANGE`       | `LRANGE key start stop`                        | —                                                              |
 | `SADD`         | `SADD key member [member …]`                   | —                                                              |
 | `SMEMBERS`     | `SMEMBERS key`                                 | —                                                              |
+| `SISMEMBER`    | `SISMEMBER key member`                         | —                                                              |
+| `SMISMEMBER`   | `SMISMEMBER key member [member …]`             | —                                                              |
+| `SRANDMEMBER`  | `SRANDMEMBER key [count]`                      | —                                                              |
 | `SCARD`        | `SCARD key`                                    | —                                                              |
 | `SMOVE`        | `SMOVE source destination member`              | —                                                              |
 | `SPOP`         | `SPOP key [count]`                             | —                                                              |
