@@ -111,12 +111,12 @@ Implementation status of every Redis 8.8 command, grouped by data type.
 | `SINTER` | Returns the intersection of multiple sets | | | |
 | `SINTERCARD` | Returns the count of the intersection of multiple sets | | | |
 | `SINTERSTORE` | Stores the intersection of multiple sets in a key | | | |
-| `SISMEMBER` | Determines whether a member belongs to a set | | ✓ | |
+| `SISMEMBER` | Determines whether a member belongs to a set | ✓ | | |
 | `SMEMBERS` | Returns all members of a set | ✓ | | |
-| `SMISMEMBER` | Determines whether multiple members belong to a set | | ✓ | |
+| `SMISMEMBER` | Determines whether multiple members belong to a set | ✓ | | |
 | `SMOVE` | Moves a member from one set to another atomically | ✓ | | |
 | `SPOP` | Removes and returns one or more random members from a set | ✓ | | |
-| `SRANDMEMBER` | Returns one or more random members from a set without removing them | | ✓ | |
+| `SRANDMEMBER` | Returns one or more random members from a set without removing them | ✓ | | |
 | `SREM` | Removes one or more members from a set | ✓ | | |
 | `SSCAN` | Iterates over members of a set | | | |
 | `SUNION` | Returns the union of multiple sets | | | |

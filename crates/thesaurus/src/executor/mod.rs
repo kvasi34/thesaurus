@@ -67,6 +67,9 @@ impl Executor {
             Command::LRange { key, start, stop } => self.lrange(key, *start, *stop),
             Command::SAdd { key, members } => self.sadd(key, members),
             Command::SMembers { key } => self.smembers(key),
+            Command::SIsMember { key, member } => self.sismember(key, member),
+            Command::SMIsMember { key, members } => self.smismember(key, members),
+            Command::SRandMember { key, count } => self.srandmember(key, *count),
             Command::SCard { key } => self.scard(key),
             Command::SMove {
                 source,

@@ -82,6 +82,12 @@ pub enum Command {
     SAdd { key: String, members: Vec<String> },
     /// Returns all the members of the set value stored at key.
     SMembers { key: String },
+    /// Returns if member is a member of the set stored at key.
+    SIsMember { key: String, member: String },
+    /// Returns whether each member is a member of the set stored at key.
+    SMIsMember { key: String, members: Vec<String> },
+    /// When called with just the key argument, return a random element from the set value stored at key.
+    SRandMember { key: String, count: Option<i64> },
     /// Returns the set cardinality (number of elements) of the set stored at key.
     SCard { key: String },
     /// Moves member from the set at source to the set at destination.
@@ -186,6 +192,9 @@ impl Command {
                 Command::SAdd { key, members }
             }),
             "SMEMBERS" => Command::parse_key_command(args, |key| Command::SMembers { key }),
+            "SISMEMBER" => Command::parse_sismember_command(args),
+            "SMISMEMBER" => Command::parse_smismember_command(args),
+            "SRANDMEMBER" => Command::parse_srandmember_command(args),
             "SCARD" => Command::parse_key_command(args, |key| Command::SCard { key }),
             "SMOVE" => Command::parse_smove_command(args),
             "SPOP" => Command::parse_pop_command(args, |key, count| Command::SPop { key, count }),
@@ -1304,6 +1313,126 @@ mod tests {
                 got: 1
             }
         );
+    }
+
+    #[test]
+    fn test_from_resp2_sismember() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SISMEMBER", "myset", "a"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::SIsMember {
+                key: "myset".to_string(),
+                member: "a".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_sismember_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SISMEMBER", "myset"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 3,
+                got: 2
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_smismember() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SMISMEMBER", "myset", "a"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::SMIsMember {
+                key: "myset".to_string(),
+                members: vec!["a".to_string()]
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_smismember_multiple_members() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&[
+            "SMISMEMBER",
+            "myset",
+            "a",
+            "b",
+            "c",
+        ]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::SMIsMember {
+                key: "myset".to_string(),
+                members: vec!["a".to_string(), "b".to_string(), "c".to_string()]
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_smismember_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SMISMEMBER", "myset"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 3,
+                got: 2
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_srandmember() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SRANDMEMBER", "myset"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::SRandMember {
+                key: "myset".to_string(),
+                count: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_srandmember_with_count() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SRANDMEMBER", "myset", "2"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::SRandMember {
+                key: "myset".to_string(),
+                count: Some(2),
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_srandmember_negative_count() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SRANDMEMBER", "myset", "-2"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::SRandMember {
+                key: "myset".to_string(),
+                count: Some(-2),
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_srandmember_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SRANDMEMBER"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 2,
+                got: 1
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_srandmember_count_not_an_integer() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["SRANDMEMBER", "myset", "foo"]));
+        assert!(matches!(cmd.err().unwrap(), HandlerError::NotAnInteger(_)));
     }
 
     #[test]

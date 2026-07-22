@@ -3108,6 +3108,371 @@ async fn test_smembers_wrong_arity() {
     assert!(matches!(response, RespValue::SimpleError(_)));
 }
 
+// --- SISMEMBER ---
+
+/// Builds an SISMEMBER command with a key and a single member.
+fn sismember_cmd(key: &str, member: &str) -> Vec<u8> {
+    resp2::encode(&RespValue::Array(Some(vec![
+        RespValue::BulkString(Some("SISMEMBER".to_string())),
+        RespValue::BulkString(Some(key.to_string())),
+        RespValue::BulkString(Some(member.to_string())),
+    ])))
+}
+
+#[tokio::test]
+async fn test_sismember_missing_key_returns_zero() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&sismember_cmd("missing", "a"))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+}
+
+#[tokio::test]
+async fn test_sismember_returns_one_when_member_present() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SADD", "myset", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&sismember_cmd("myset", "a"))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(1));
+}
+
+#[tokio::test]
+async fn test_sismember_returns_zero_when_member_absent() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SADD", "myset", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&sismember_cmd("myset", "b"))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+}
+
+#[tokio::test]
+async fn test_sismember_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client.write_all(&sismember_cmd("key", "a")).await.unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+#[tokio::test]
+async fn test_sismember_wrong_arity() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*2\r\n$9\r\nSISMEMBER\r\n$3\r\nkey\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert!(matches!(response, RespValue::SimpleError(_)));
+}
+
+// --- SMISMEMBER ---
+
+#[tokio::test]
+async fn test_smismember_missing_key_returns_all_zero() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SMISMEMBER", "missing", &["a", "b"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![RespValue::Integer(0), RespValue::Integer(0)]))
+    );
+}
+
+#[tokio::test]
+async fn test_smismember_returns_flag_per_member_in_order() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SADD", "myset", &["a", "b"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&push_cmd("SMISMEMBER", "myset", &["a", "c", "b"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![
+            RespValue::Integer(1),
+            RespValue::Integer(0),
+            RespValue::Integer(1),
+        ]))
+    );
+}
+
+#[tokio::test]
+async fn test_smismember_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SMISMEMBER", "key", &["a"]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+#[tokio::test]
+async fn test_smismember_wrong_arity() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*2\r\n$10\r\nSMISMEMBER\r\n$3\r\nkey\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert!(matches!(response, RespValue::SimpleError(_)));
+}
+
+// --- SRANDMEMBER ---
+
+/// Builds an SRANDMEMBER command with an optional (possibly negative) count.
+fn srandmember_cmd(key: &str, count: Option<i64>) -> Vec<u8> {
+    let mut parts = vec![
+        RespValue::BulkString(Some("SRANDMEMBER".to_string())),
+        RespValue::BulkString(Some(key.to_string())),
+    ];
+    if let Some(n) = count {
+        parts.push(RespValue::BulkString(Some(n.to_string())));
+    }
+    resp2::encode(&RespValue::Array(Some(parts)))
+}
+
+#[tokio::test]
+async fn test_srandmember_missing_key_without_count_returns_nil() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&srandmember_cmd("missing", None))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::BulkString(None));
+}
+
+#[tokio::test]
+async fn test_srandmember_missing_key_with_count_returns_empty_array() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&srandmember_cmd("missing", Some(3)))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Array(Some(vec![])));
+}
+
+#[tokio::test]
+async fn test_srandmember_without_count_returns_single_bulk_string_and_does_not_remove() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SADD", "myset", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&srandmember_cmd("myset", None))
+        .await
+        .unwrap();
+
+    let member = match resp2::decode_async(&mut client).await.unwrap() {
+        RespValue::BulkString(Some(s)) => s,
+        other => panic!("expected bulk string, got {other:?}"),
+    };
+    assert!(["a", "b", "c"].contains(&member.as_str()));
+
+    client
+        .write_all(b"*2\r\n$5\r\nSCARD\r\n$5\r\nmyset\r\n")
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(3));
+}
+
+#[tokio::test]
+async fn test_srandmember_with_positive_count_returns_distinct_members() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SADD", "myset", &["a", "b", "c"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&srandmember_cmd("myset", Some(2)))
+        .await
+        .unwrap();
+
+    let members = members_set(resp2::decode_async(&mut client).await.unwrap());
+    assert_eq!(members.len(), 2);
+    assert!(members.is_subset(&HashSet::from([
+        "a".to_string(),
+        "b".to_string(),
+        "c".to_string()
+    ])));
+
+    client
+        .write_all(b"*2\r\n$5\r\nSCARD\r\n$5\r\nmyset\r\n")
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(3));
+}
+
+#[tokio::test]
+async fn test_srandmember_with_count_exceeding_size_returns_all_distinct_members() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SADD", "myset", &["a", "b"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&srandmember_cmd("myset", Some(10)))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        members_set(response),
+        HashSet::from(["a".to_string(), "b".to_string()])
+    );
+}
+
+#[tokio::test]
+async fn test_srandmember_with_negative_count_allows_duplicates() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SADD", "myset", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&srandmember_cmd("myset", Some(-5)))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    match response {
+        RespValue::Array(Some(items)) => {
+            assert_eq!(items.len(), 5);
+            for item in items {
+                assert_eq!(item, RespValue::BulkString(Some("a".to_string())));
+            }
+        }
+        other => panic!("expected array, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn test_srandmember_wrongtype() {
+    let store = Store::new();
+    store.set_string("key", "val");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&srandmember_cmd("key", None))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+#[tokio::test]
+async fn test_srandmember_wrong_arity() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*1\r\n$11\r\nSRANDMEMBER\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert!(matches!(response, RespValue::SimpleError(_)));
+}
+
 // --- SCARD ---
 
 #[tokio::test]

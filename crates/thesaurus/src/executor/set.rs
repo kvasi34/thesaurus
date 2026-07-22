@@ -28,6 +28,58 @@ impl Executor {
         }
     }
 
+    /// Handles SISMEMBER: returns whether `member` is a member of the set at `key`. Returns 0 if
+    /// the key does not exist. Returns a WRONGTYPE error if the key holds a non-set value.
+    pub(super) fn sismember(&self, key: &str, member: &str) -> RespValue {
+        match self.store.sismember(key, member.to_string()) {
+            Ok(b) => RespValue::Integer(b as i64),
+            Err(e) => RespValue::SimpleError(e.to_string()),
+        }
+    }
+
+    /// Handles SMISMEMBER: returns, for each member in `members`, whether it is a member of the
+    /// set at `key`, as an array of 0/1 integers in the same order as `members`. Returns all
+    /// zeros if the key does not exist. Returns a WRONGTYPE error if the key holds a non-set
+    /// value.
+    pub(super) fn smismember(&self, key: &str, members: &[String]) -> RespValue {
+        match self.store.smismember(key, members.to_vec()) {
+            Ok(flags) => RespValue::Array(Some(
+                flags
+                    .into_iter()
+                    .map(|b| RespValue::Integer(b as i64))
+                    .collect::<Vec<RespValue>>(),
+            )),
+            Err(e) => RespValue::SimpleError(e.to_string()),
+        }
+    }
+
+    /// Handles SRANDMEMBER: returns one or more random members from the set at `key`, without
+    /// removing them. Without a count, returns a single bulk string (or nil if the key does not
+    /// exist). With a non-negative count, returns an array of up to `count` distinct members
+    /// (fewer if the set has fewer members, empty if the key does not exist). With a negative
+    /// count, returns an array of exactly `count.abs()` members, allowing duplicates (empty if
+    /// the key does not exist). Returns a WRONGTYPE error if the key holds a non-set value.
+    pub(super) fn srandmember(&self, key: &str, count: Option<i64>) -> RespValue {
+        let amount = count.map(|c| c.unsigned_abs() as usize);
+        let allow_repetition = count.is_some_and(|c| c < 0);
+
+        match self.store.srandmember(key, amount, allow_repetition) {
+            Ok(mut members) => {
+                if count.is_some() {
+                    return RespValue::Array(Some(
+                        members
+                            .into_iter()
+                            .map(|member| RespValue::BulkString(Some(member)))
+                            .collect::<Vec<RespValue>>(),
+                    ));
+                }
+
+                RespValue::BulkString(members.pop())
+            }
+            Err(e) => RespValue::SimpleError(e.to_string()),
+        }
+    }
+
     /// Handles SCARD: returns the number of members in the set at `key`. Returns 0 if the key
     /// does not exist. Returns a WRONGTYPE error if the key holds a non-set value.
     pub(super) fn scard(&self, key: &str) -> RespValue {
@@ -183,6 +235,162 @@ mod tests {
         let ex = executor();
         ex.store.set_string("key", "val");
         assert!(matches!(ex.smembers("key"), RespValue::SimpleError(_)));
+    }
+
+    // sismember
+    #[test]
+    fn test_sismember_returns_zero_on_missing_key() {
+        let ex = executor();
+        assert_eq!(ex.sismember("missing", "a"), RespValue::Integer(0));
+    }
+
+    #[test]
+    fn test_sismember_returns_one_when_member_present() {
+        let ex = executor();
+        ex.sadd("key", &els(&["a"]));
+        assert_eq!(ex.sismember("key", "a"), RespValue::Integer(1));
+    }
+
+    #[test]
+    fn test_sismember_returns_zero_when_member_absent() {
+        let ex = executor();
+        ex.sadd("key", &els(&["a"]));
+        assert_eq!(ex.sismember("key", "b"), RespValue::Integer(0));
+    }
+
+    #[test]
+    fn test_sismember_returns_wrongtype_on_non_set_key() {
+        let ex = executor();
+        ex.store.set_string("key", "val");
+        assert!(matches!(
+            ex.sismember("key", "a"),
+            RespValue::SimpleError(_)
+        ));
+    }
+
+    // smismember
+    #[test]
+    fn test_smismember_returns_all_zero_on_missing_key() {
+        let ex = executor();
+        assert_eq!(
+            ex.smismember("missing", &els(&["a", "b"])),
+            RespValue::Array(Some(vec![RespValue::Integer(0), RespValue::Integer(0)]))
+        );
+    }
+
+    #[test]
+    fn test_smismember_returns_flag_per_member_in_order() {
+        let ex = executor();
+        ex.sadd("key", &els(&["a", "b"]));
+        assert_eq!(
+            ex.smismember("key", &els(&["a", "c", "b"])),
+            RespValue::Array(Some(vec![
+                RespValue::Integer(1),
+                RespValue::Integer(0),
+                RespValue::Integer(1),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_smismember_returns_wrongtype_on_non_set_key() {
+        let ex = executor();
+        ex.store.set_string("key", "val");
+        assert!(matches!(
+            ex.smismember("key", &els(&["a"])),
+            RespValue::SimpleError(_)
+        ));
+    }
+
+    // srandmember
+    #[test]
+    fn test_srandmember_returns_nil_on_missing_key_without_count() {
+        let ex = executor();
+        assert_eq!(ex.srandmember("missing", None), RespValue::BulkString(None));
+    }
+
+    #[test]
+    fn test_srandmember_returns_empty_array_on_missing_key_with_count() {
+        let ex = executor();
+        assert_eq!(
+            ex.srandmember("missing", Some(3)),
+            RespValue::Array(Some(Vec::new()))
+        );
+    }
+
+    #[test]
+    fn test_srandmember_returns_wrongtype_on_non_set_key() {
+        let ex = executor();
+        ex.store.set_string("key", "val");
+        assert!(matches!(
+            ex.srandmember("key", None),
+            RespValue::SimpleError(_)
+        ));
+    }
+
+    #[test]
+    fn test_srandmember_without_count_returns_single_bulk_string() {
+        let ex = executor();
+        ex.sadd("key", &els(&["a", "b", "c"]));
+
+        let member = match ex.srandmember("key", None) {
+            RespValue::BulkString(Some(s)) => s,
+            other => panic!("expected bulk string, got {other:?}"),
+        };
+        assert!(["a", "b", "c"].contains(&member.as_str()));
+        // srandmember does not remove the member
+        assert_eq!(ex.scard("key"), RespValue::Integer(3));
+    }
+
+    #[test]
+    fn test_srandmember_with_positive_count_returns_distinct_members() {
+        let ex = executor();
+        ex.sadd("key", &els(&["a", "b", "c"]));
+
+        let members = members_of(ex.srandmember("key", Some(2)));
+        assert_eq!(members.len(), 2);
+        assert_eq!(ex.scard("key"), RespValue::Integer(3));
+    }
+
+    #[test]
+    fn test_srandmember_with_positive_count_exceeding_size_returns_all_distinct_members() {
+        let ex = executor();
+        ex.sadd("key", &els(&["a", "b"]));
+
+        assert_eq!(
+            members_of(ex.srandmember("key", Some(10))),
+            HashSet::from(["a".to_string(), "b".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_srandmember_with_negative_count_allows_duplicates() {
+        let ex = executor();
+        ex.sadd("key", &els(&["a"]));
+
+        let resp = ex.srandmember("key", Some(-5));
+        let members = match resp {
+            RespValue::Array(Some(items)) => items
+                .into_iter()
+                .map(|item| match item {
+                    RespValue::BulkString(Some(s)) => s,
+                    other => panic!("expected bulk string, got {other:?}"),
+                })
+                .collect::<Vec<String>>(),
+            other => panic!("expected array, got {other:?}"),
+        };
+        assert_eq!(members, vec!["a".to_string(); 5]);
+        assert_eq!(ex.scard("key"), RespValue::Integer(1));
+    }
+
+    #[test]
+    fn test_srandmember_with_zero_count_returns_empty_array() {
+        let ex = executor();
+        ex.sadd("key", &els(&["a"]));
+        assert_eq!(
+            ex.srandmember("key", Some(0)),
+            RespValue::Array(Some(Vec::new()))
+        );
     }
 
     // scard
