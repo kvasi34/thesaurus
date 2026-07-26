@@ -115,6 +115,17 @@ impl Executor {
         RespValue::BulkString(value)
     }
 
+    pub(super) fn mget(&self, keys: &[String]) -> RespValue {
+        // Convert `Vec<Option<String>>` to `RespValue::Array(Vec<RespValue::BulkString>)`
+        RespValue::Array(Some(
+            self.store
+                .mget(keys)
+                .iter()
+                .map(|value| RespValue::BulkString(value.clone()))
+                .collect(),
+        ))
+    }
+
     pub(super) fn digest(&self, key: &str) -> RespValue {
         match self.store.get_string(key) {
             Ok(Some(s)) => RespValue::BulkString(Some(format!("{:016x}", Self::digest_value(&s)))),
@@ -125,5 +136,64 @@ impl Executor {
 
     fn digest_value(v: &str) -> u64 {
         xxh3_64(v.as_bytes())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::resp2::RespValue;
+    use crate::store::Store;
+
+    use super::super::Executor;
+
+    fn executor() -> Executor {
+        Executor::new(Store::new(), false)
+    }
+
+    fn keys(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn bulk(s: &str) -> RespValue {
+        RespValue::BulkString(Some(s.to_string()))
+    }
+
+    // mget
+    #[test]
+    fn test_mget_returns_array_of_values_in_requested_order() {
+        let ex = executor();
+        ex.store.set_string("a", "1");
+        ex.store.set_string("b", "2");
+        assert_eq!(
+            ex.mget(&keys(&["b", "a"])),
+            RespValue::Array(Some(vec![bulk("2"), bulk("1")]))
+        );
+    }
+
+    #[test]
+    fn test_mget_returns_null_bulk_string_for_missing_key() {
+        let ex = executor();
+        ex.store.set_string("a", "1");
+        assert_eq!(
+            ex.mget(&keys(&["a", "missing"])),
+            RespValue::Array(Some(vec![bulk("1"), RespValue::BulkString(None)]))
+        );
+    }
+
+    #[test]
+    fn test_mget_returns_null_bulk_string_on_non_string_key() {
+        let ex = executor();
+        ex.store.set_string("a", "1");
+        ex.sadd("set", &keys(&["x"]));
+        assert_eq!(
+            ex.mget(&keys(&["a", "set"])),
+            RespValue::Array(Some(vec![bulk("1"), RespValue::BulkString(None)]))
+        );
+    }
+
+    #[test]
+    fn test_mget_returns_empty_array_for_no_keys() {
+        let ex = executor();
+        assert_eq!(ex.mget(&[]), RespValue::Array(Some(Vec::new())));
     }
 }

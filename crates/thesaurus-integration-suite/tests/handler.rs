@@ -251,6 +251,170 @@ async fn test_getdel_expired_key() {
 }
 
 #[tokio::test]
+async fn test_mget_single_key() {
+    let store = Store::new();
+    store.set_string("foo", "bar");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // MGET foo
+    client
+        .write_all(b"*2\r\n$4\r\nMGET\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![RespValue::BulkString(Some("bar".to_string()))]))
+    );
+}
+
+#[tokio::test]
+async fn test_mget_returns_values_in_requested_order() {
+    let store = Store::new();
+    store.set_string("foo", "bar");
+    store.set_string("baz", "qux");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // MGET baz foo
+    client
+        .write_all(b"*3\r\n$4\r\nMGET\r\n$3\r\nbaz\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("qux".to_string())),
+            RespValue::BulkString(Some("bar".to_string())),
+        ]))
+    );
+}
+
+#[tokio::test]
+async fn test_mget_missing_key_returns_null_element() {
+    let store = Store::new();
+    store.set_string("foo", "bar");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // MGET foo missing
+    client
+        .write_all(b"*3\r\n$4\r\nMGET\r\n$3\r\nfoo\r\n$7\r\nmissing\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("bar".to_string())),
+            RespValue::BulkString(None),
+        ]))
+    );
+}
+
+#[tokio::test]
+async fn test_mget_non_string_key_returns_null_element() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+    client
+        .write_all(b"*3\r\n$5\r\nRPUSH\r\n$6\r\nmylist\r\n$1\r\na\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // MGET never fails on wrong type — the list key yields a null element
+    client
+        .write_all(b"*3\r\n$4\r\nMGET\r\n$3\r\nfoo\r\n$6\r\nmylist\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("bar".to_string())),
+            RespValue::BulkString(None),
+        ]))
+    );
+}
+
+#[tokio::test]
+async fn test_mget_expired_key_returns_null_element() {
+    use std::time::{Duration, Instant};
+    let store = Store::new();
+    store.set_string("foo", "bar");
+    store.set_string("baz", "qux");
+    store.set_ttl("foo", Instant::now() - Duration::from_secs(1));
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // MGET foo baz
+    client
+        .write_all(b"*3\r\n$4\r\nMGET\r\n$3\r\nfoo\r\n$3\r\nbaz\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![
+            RespValue::BulkString(None),
+            RespValue::BulkString(Some("qux".to_string())),
+        ]))
+    );
+}
+
+#[tokio::test]
+async fn test_mget_duplicate_keys() {
+    let store = Store::new();
+    store.set_string("foo", "bar");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // MGET foo foo
+    client
+        .write_all(b"*3\r\n$4\r\nMGET\r\n$3\r\nfoo\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("bar".to_string())),
+            RespValue::BulkString(Some("bar".to_string())),
+        ]))
+    );
+}
+
+#[tokio::test]
+async fn test_mget_wrong_arity() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client.write_all(b"*1\r\n$4\r\nMGET\r\n").await.unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert!(matches!(response, RespValue::SimpleError(_)));
+}
+
+#[tokio::test]
 async fn test_exists_existing_key() {
     let store = Store::new();
     store.set_string("key1", "Hello");

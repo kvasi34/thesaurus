@@ -54,6 +54,8 @@ pub enum Command {
     GetDel { key: String },
     /// Returns if key(s) exists.
     Exists { keys: Vec<String> },
+    /// Returns the values of all specified keys.
+    MGet { keys: Vec<String> },
     /// Prepends one or more elements to a list, creating the key if it does not exist.
     LPush { key: String, elements: Vec<String> },
     /// Appends one or more elements to a list, creating the key if it does not exist.
@@ -170,6 +172,7 @@ impl Command {
             "DEL" => Command::parse_keys_command(args, |keys| Command::Delete { keys }),
             "GETDEL" => Command::parse_key_command(args, |key| Command::GetDel { key }),
             "EXISTS" => Command::parse_keys_command(args, |keys| Command::Exists { keys }),
+            "MGET" => Command::parse_keys_command(args, |keys| Command::MGet { keys }),
             "LPUSH" => Command::parse_key_with_elements_command(args, |key, elements| {
                 Command::LPush { key, elements }
             }),
@@ -520,6 +523,51 @@ mod tests {
             HandlerError::WrongArity {
                 expected: 2,
                 got: 3
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_mget() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["MGET", "foo"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::MGet {
+                keys: vec!["foo".to_string()]
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_mget_multiple_keys() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["MGET", "foo", "bar", "baz"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::MGet {
+                keys: vec!["foo".to_string(), "bar".to_string(), "baz".to_string()]
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_mget_preserves_duplicate_keys() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["MGET", "foo", "foo"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::MGet {
+                keys: vec!["foo".to_string(), "foo".to_string()]
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_mget_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["MGET"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 2,
+                got: 1
             }
         );
     }
