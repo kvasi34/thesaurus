@@ -40,6 +40,19 @@ impl Store {
             })
             .collect()
     }
+
+    /// Sets every key to its value, overwriting any previous value regardless of its type and
+    /// clearing any TTL it had. Because of this, the operation never fails.
+    ///
+    /// Pairs are applied in order, so the last value wins when a key appears more than once.
+    /// The whole batch is applied under a single write lock — readers never observe a partial MSET.
+    pub fn mset(&self, items: Vec<(String, String)>) {
+        let mut guard = self.inner.write().unwrap();
+        for (key, value) in items.into_iter() {
+            guard.expiry_index.remove(&key);
+            guard.data.insert(key, StoreValue::Str(value));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -51,6 +64,12 @@ mod tests {
 
     fn keys(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn items(v: &[(&str, &str)]) -> Vec<(String, String)> {
+        v.iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect()
     }
 
     // mget
@@ -117,5 +136,84 @@ mod tests {
         let store = Store::new();
         store.set_string("a", "1");
         assert_eq!(store.mget(&[]), Vec::<Option<String>>::new());
+    }
+
+    // mset
+    #[test]
+    fn test_mset_sets_all_keys() {
+        let store = Store::new();
+        store.mset(items(&[("a", "1"), ("b", "2")]));
+        assert_eq!(store.get_string("a"), Ok(Some("1".to_string())));
+        assert_eq!(store.get_string("b"), Ok(Some("2".to_string())));
+        assert_eq!(store.size(), 2);
+    }
+
+    #[test]
+    fn test_mset_overwrites_existing_string_value() {
+        let store = Store::new();
+        store.set_string("a", "1");
+        store.mset(items(&[("a", "2")]));
+        assert_eq!(store.get_string("a"), Ok(Some("2".to_string())));
+    }
+
+    #[test]
+    fn test_mset_overwrites_non_string_value() {
+        let store = Store::new();
+        store.set("list", StoreValue::List(VecDeque::from(["x".to_string()])));
+        store.mset(items(&[("list", "1")]));
+        assert_eq!(store.get_string("list"), Ok(Some("1".to_string())));
+    }
+
+    #[test]
+    fn test_mset_clears_existing_ttl() {
+        let store = Store::new();
+        store.set_string("a", "1");
+        store.set_ttl("a", Instant::now() + Duration::from_secs(60));
+        store.mset(items(&[("a", "2")]));
+        assert_eq!(store.get_ttl("a"), None);
+        assert_eq!(store.get_string("a"), Ok(Some("2".to_string())));
+    }
+
+    #[test]
+    fn test_mset_overwrites_expired_key() {
+        let store = Store::new();
+        store.set_string("a", "1");
+        store.set_ttl("a", Instant::now() - Duration::from_secs(1));
+        store.mset(items(&[("a", "2")]));
+        assert_eq!(store.get_string("a"), Ok(Some("2".to_string())));
+    }
+
+    #[test]
+    fn test_mset_last_value_wins_for_duplicate_keys() {
+        let store = Store::new();
+        store.mset(items(&[("a", "1"), ("a", "2")]));
+        assert_eq!(store.get_string("a"), Ok(Some("2".to_string())));
+        assert_eq!(store.size(), 1);
+    }
+
+    #[test]
+    fn test_mset_leaves_other_keys_untouched() {
+        let store = Store::new();
+        store.set_string("a", "1");
+        store.set_ttl("a", Instant::now() + Duration::from_secs(60));
+        store.mset(items(&[("b", "2")]));
+        assert_eq!(store.get_string("a"), Ok(Some("1".to_string())));
+        assert!(store.get_ttl("a").is_some());
+    }
+
+    #[test]
+    fn test_mset_sets_empty_value() {
+        let store = Store::new();
+        store.mset(items(&[("a", "")]));
+        assert_eq!(store.get_string("a"), Ok(Some("".to_string())));
+    }
+
+    #[test]
+    fn test_mset_with_no_items_is_a_noop() {
+        let store = Store::new();
+        store.set_string("a", "1");
+        store.mset(Vec::new());
+        assert_eq!(store.get_string("a"), Ok(Some("1".to_string())));
+        assert_eq!(store.size(), 1);
     }
 }

@@ -52,6 +52,7 @@ impl Executor {
             Command::GetDel { key } => self.get_del(key),
             Command::Exists { keys } => self.exists(keys),
             Command::MGet { keys } => self.mget(keys),
+            Command::MSet { items } => self.mset(items),
             Command::LPush { key, elements } => self.lpush(key, elements),
             Command::RPush { key, elements } => self.rpush(key, elements),
             Command::LPushX { key, elements } => self.lpushx(key, elements),

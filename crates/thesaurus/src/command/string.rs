@@ -155,4 +155,30 @@ impl Command {
             get,
         })
     }
+
+    /// Helper function to parse the arguments of a MSET command into a `Command::MSet` enum.
+    pub(super) fn parse_mset_command(args: &[RespValue]) -> Result<Self, HandlerError> {
+        super::check_min_arity(args, 3)?;
+
+        // Expect the total number of arguments (command included) to be odd; since arguments come in key-value pairs
+        if args.len().is_multiple_of(2) {
+            return Err(HandlerError::WrongArity {
+                expected: args.len() as u8 + 1,
+                got: args.len() as u8,
+            });
+        }
+
+        // Parse the key-value pairs into a `Vec<(String, String)>`
+        let items = args[1..]
+            .chunks_exact(2)
+            .map(|pair| match (&pair[0], &pair[1]) {
+                (RespValue::BulkString(Some(k)), RespValue::BulkString(Some(v))) => {
+                    (k.clone(), v.clone())
+                }
+                _ => unreachable!(),
+            })
+            .collect();
+
+        Ok(Command::MSet { items })
+    }
 }
