@@ -126,6 +126,12 @@ impl Executor {
         ))
     }
 
+    pub(super) fn mset(&self, items: &[(String, String)]) -> RespValue {
+        self.store.mset(items.to_owned());
+
+        RespValue::SimpleString("OK".to_string())
+    }
+
     pub(super) fn digest(&self, key: &str) -> RespValue {
         match self.store.get_string(key) {
             Ok(Some(s)) => RespValue::BulkString(Some(format!("{:016x}", Self::digest_value(&s)))),
@@ -141,6 +147,8 @@ impl Executor {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use crate::resp2::RespValue;
     use crate::store::Store;
 
@@ -154,8 +162,18 @@ mod tests {
         v.iter().map(|s| s.to_string()).collect()
     }
 
+    fn items(v: &[(&str, &str)]) -> Vec<(String, String)> {
+        v.iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect()
+    }
+
     fn bulk(s: &str) -> RespValue {
         RespValue::BulkString(Some(s.to_string()))
+    }
+
+    fn ok() -> RespValue {
+        RespValue::SimpleString("OK".to_string())
     }
 
     // mget
@@ -195,5 +213,54 @@ mod tests {
     fn test_mget_returns_empty_array_for_no_keys() {
         let ex = executor();
         assert_eq!(ex.mget(&[]), RespValue::Array(Some(Vec::new())));
+    }
+
+    // mset
+    #[test]
+    fn test_mset_returns_ok_and_writes_all_pairs() {
+        let ex = executor();
+        assert_eq!(ex.mset(&items(&[("a", "1"), ("b", "2")])), ok());
+        assert_eq!(ex.get("a"), bulk("1"));
+        assert_eq!(ex.get("b"), bulk("2"));
+    }
+
+    #[test]
+    fn test_mset_overwrites_existing_value() {
+        let ex = executor();
+        ex.store.set_string("a", "1");
+        assert_eq!(ex.mset(&items(&[("a", "2")])), ok());
+        assert_eq!(ex.get("a"), bulk("2"));
+    }
+
+    #[test]
+    fn test_mset_overwrites_non_string_key_without_error() {
+        let ex = executor();
+        ex.sadd("set", &keys(&["x"]));
+        assert_eq!(ex.mset(&items(&[("set", "1")])), ok());
+        assert_eq!(ex.get("set"), bulk("1"));
+    }
+
+    #[test]
+    fn test_mset_clears_existing_ttl() {
+        let ex = executor();
+        ex.store.set_string("a", "1");
+        ex.store
+            .set_ttl("a", Instant::now() + Duration::from_secs(60));
+        assert_eq!(ex.mset(&items(&[("a", "2")])), ok());
+        // TTL replies -1 for a key that exists without an expiry
+        assert_eq!(ex.ttl("a"), RespValue::Integer(-1));
+    }
+
+    #[test]
+    fn test_mset_last_value_wins_for_duplicate_keys() {
+        let ex = executor();
+        assert_eq!(ex.mset(&items(&[("a", "1"), ("a", "2")])), ok());
+        assert_eq!(ex.get("a"), bulk("2"));
+    }
+
+    #[test]
+    fn test_mset_returns_ok_for_no_items() {
+        let ex = executor();
+        assert_eq!(ex.mset(&[]), ok());
     }
 }

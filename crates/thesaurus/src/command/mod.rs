@@ -56,6 +56,8 @@ pub enum Command {
     Exists { keys: Vec<String> },
     /// Returns the values of all specified keys.
     MGet { keys: Vec<String> },
+    /// Sets the given keys to their respective values.
+    MSet { items: Vec<(String, String)> },
     /// Prepends one or more elements to a list, creating the key if it does not exist.
     LPush { key: String, elements: Vec<String> },
     /// Appends one or more elements to a list, creating the key if it does not exist.
@@ -173,6 +175,7 @@ impl Command {
             "GETDEL" => Command::parse_key_command(args, |key| Command::GetDel { key }),
             "EXISTS" => Command::parse_keys_command(args, |keys| Command::Exists { keys }),
             "MGET" => Command::parse_keys_command(args, |keys| Command::MGet { keys }),
+            "MSET" => Command::parse_mset_command(args),
             "LPUSH" => Command::parse_key_with_elements_command(args, |key, elements| {
                 Command::LPush { key, elements }
             }),
@@ -236,6 +239,7 @@ impl Command {
             Command::Set { .. }
                 | Command::Delete { .. }
                 | Command::GetDel { .. }
+                | Command::MSet { .. }
                 | Command::LPush { .. }
                 | Command::RPush { .. }
                 | Command::LPushX { .. }
@@ -568,6 +572,97 @@ mod tests {
             HandlerError::WrongArity {
                 expected: 2,
                 got: 1
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_mset() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["MSET", "foo", "bar"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::MSet {
+                items: vec![("foo".to_string(), "bar".to_string())]
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_mset_multiple_pairs() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&[
+            "MSET", "foo", "1", "bar", "2", "baz", "3",
+        ]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::MSet {
+                items: vec![
+                    ("foo".to_string(), "1".to_string()),
+                    ("bar".to_string(), "2".to_string()),
+                    ("baz".to_string(), "3".to_string()),
+                ]
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_mset_preserves_duplicate_keys_in_order() {
+        // Duplicates are kept as-is; last-write-wins is resolved when the store applies them
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["MSET", "foo", "1", "foo", "2"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::MSet {
+                items: vec![
+                    ("foo".to_string(), "1".to_string()),
+                    ("foo".to_string(), "2".to_string()),
+                ]
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_mset_empty_value() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["MSET", "foo", ""]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::MSet {
+                items: vec![("foo".to_string(), "".to_string())]
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_mset_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["MSET"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 3,
+                got: 1
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_mset_key_without_value() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["MSET", "foo"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 3,
+                got: 2
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_mset_trailing_key_without_value() {
+        // An even argument count means the last key has no value to pair with
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["MSET", "foo", "1", "bar"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 5,
+                got: 4
             }
         );
     }

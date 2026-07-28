@@ -29,7 +29,7 @@ Implementation status of every Redis 8.8 command, grouped by data type.
 | `INCREX` | Increments a key's value and sets its expiration | | | |
 | `LCS` | Finds the longest common substring | | | |
 | `MGET` | Returns the string values of one or more keys | ✓ | | |
-| `MSET` | Sets the string values of one or more keys | | ✓ | |
+| `MSET` | Sets the string values of one or more keys | ✓ | | |
 | `MSETEX` | Sets multiple string keys with a shared expiration | | | |
 | `MSETNX` | Sets the string values of keys only when none exist | | | |
 | `PSETEX` | Sets the string value and expiration in milliseconds of a key | | | |
