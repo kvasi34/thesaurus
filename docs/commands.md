@@ -35,9 +35,11 @@
 | `EXPIREAT`     | `EXPIREAT key unix-secs`                       |                                                                |
 | `PEXPIREAT`    | `PEXPIREAT key unix-ms`                        |                                                                |
 | `TTL`          | `TTL key`                                      | —                                                              |
+| `PTTL`         | `PTTL key`                                     | —                                                              |
 | `EXPIRETIME`   | `EXPIRETIME key`                               | —                                                              |
 | `PEXPIRETIME`  | `PEXPIRETIME key`                              | —                                                              |
 | `PERSIST`      | `PERSIST key`                                  | —                                                              |
+| `KEYS`         | `KEYS pattern`                                 | —                                                              |
 | `DBSIZE`       | `DBSIZE`                                       | —                                                              |
 | `SELECT`       | `SELECT index`                                 | —                                                              |
 | `FLUSHDB`      | `FLUSHDB [ASYNC\|SYNC]`                        | `ASYNC`, `SYNC`                                                |
@@ -74,3 +76,20 @@
 | Flag  | Description                                                     |
 |-------|-----------------------------------------------------------------|
 | `GET` | Return the previous value before the write (or `nil` if absent) |
+
+### KEYS patterns
+
+`KEYS` matches key names against a glob-style pattern:
+
+| Pattern   | Description                                          |
+|-----------|------------------------------------------------------|
+| `*`       | Matches any sequence of characters, including none   |
+| `?`       | Matches exactly one character                        |
+| `[abc]`   | Matches one character from the set                   |
+| `[a-z]`   | Matches one character from the range                 |
+| `[^abc]`  | Matches one character **not** in the set             |
+| `\*`      | Matches a literal `*` (same for other metacharacters)|
+
+No pattern is rejected as malformed — an odd one simply matches few keys or none, and `KEYS` returns an empty array. An unterminated character class ends where the pattern does, so `[foo` is the class `{f, o}` over a single character.
+
+Matching is byte-oriented and case-sensitive: `?` matches one *byte*, so a multi-byte UTF-8 character takes as many `?` as it has bytes.

@@ -104,8 +104,10 @@ pub enum Command {
     SPop { key: String, count: Option<u64> },
     /// Removes the specified members from the set stored at key.
     SRem { key: String, members: Vec<String> },
-    /// Gets the remaining time to live of a key that has a timeout.
+    /// Gets the remaining time to live of a key that has a timeout (seconds).
     Ttl { key: String },
+    /// Gets the remaining time to live of a key that has a timeout (milliseconds).
+    PTtl { key: String },
     /// Returns the absolute Unix timestamp (since January 1, 1970) in seconds at which the given key will expire.
     ExpireTime { key: String },
     /// Returns the absolute Unix timestamp (since January 1, 1970) in milliseconds at which the given key will expire.
@@ -120,6 +122,8 @@ pub enum Command {
     ExpireAt { key: String, deadline_secs: u64 },
     /// Sets a timeout for a key at an absolute Unix timestamp in milliseconds.
     PExpireAt { key: String, deadline_ms: u64 },
+    /// Returns all keys matching glob-style pattern.
+    Keys { pattern: String },
     /// Gets the hash digest for the value stored in the specified key as a hexadecimal string. A hash digest is a fixed-size
     /// numerical representation of a string value, computed using the XXH3 hash algorithm. Can be used for efficient comparison operations.
     Digest { key: String },
@@ -208,6 +212,7 @@ impl Command {
                 Command::SRem { key, members }
             }),
             "TTL" => Command::parse_key_command(args, |key| Command::Ttl { key }),
+            "PTTL" => Command::parse_key_command(args, |key| Command::PTtl { key }),
             "EXPIRETIME" => Command::parse_key_command(args, |key| Command::ExpireTime { key }),
             "PEXPIRETIME" => Command::parse_key_command(args, |key| Command::PExpireTime { key }),
             "PERSIST" => Command::parse_key_command(args, |key| Command::Persist { key }),
@@ -224,6 +229,7 @@ impl Command {
             "PEXPIREAT" => Command::parse_expire_commands(args, |key, deadline_ms| {
                 Command::PExpireAt { key, deadline_ms }
             }),
+            "KEYS" => Command::parse_key_command(args, |pattern| Command::Keys { pattern }),
             "DIGEST" => Command::parse_key_command(args, |key| Command::Digest { key }),
             "SELECT" => Command::parse_select_command(args),
             "DBSIZE" => Command::parse_dbsize_command(args),
@@ -1036,6 +1042,64 @@ mod tests {
     }
 
     #[test]
+    fn test_from_resp2_ttl() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["TTL", "foo"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Ttl {
+                key: "foo".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_ttl_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["TTL", "foo", "bar"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 2,
+                got: 3
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_pttl() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["PTTL", "foo"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::PTtl {
+                key: "foo".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_pttl_missing_key() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["PTTL"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 2,
+                got: 1
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_pttl_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["PTTL", "foo", "bar"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 2,
+                got: 3
+            }
+        );
+    }
+
+    #[test]
     fn test_from_resp2_expiretime() {
         let cmd = Command::from_resp2(&create_cmd_resp_msg(&["EXPIRETIME", "foo"]));
         assert_eq!(
@@ -1652,6 +1716,53 @@ mod tests {
             HandlerError::WrongArity {
                 expected: 3,
                 got: 2
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_keys() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["KEYS", "user:*"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Keys {
+                pattern: "user:*".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_keys_malformed_pattern_is_accepted() {
+        // Pattern validity is not a parsing concern: a malformed pattern matches nothing.
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["KEYS", "[foo"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::Keys {
+                pattern: "[foo".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_keys_missing_pattern() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["KEYS"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 2,
+                got: 1
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_keys_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["KEYS", "foo", "bar"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 2,
+                got: 3
             }
         );
     }

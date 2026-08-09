@@ -672,6 +672,20 @@ async fn test_ttl_missing_key() {
 }
 
 #[tokio::test]
+async fn test_pttl_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*2\r\n$4\r\nPTTL\r\n$7\r\nmissing\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(-2));
+}
+
+#[tokio::test]
 async fn test_ttl_key_without_expiry() {
     let addr = start_handler().await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -684,6 +698,26 @@ async fn test_ttl_key_without_expiry() {
 
     client
         .write_all(b"*2\r\n$3\r\nTTL\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(-1));
+}
+
+#[tokio::test]
+async fn test_pttl_key_without_expiry() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*2\r\n$4\r\nPTTL\r\n$3\r\nfoo\r\n")
         .await
         .unwrap();
 
@@ -789,6 +823,35 @@ async fn test_ttl_key_with_expiry() {
 }
 
 #[tokio::test]
+async fn test_pttl_key_with_expiry() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*3\r\n$6\r\nEXPIRE\r\n$3\r\nfoo\r\n$2\r\n60\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*2\r\n$4\r\nPTTL\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    match response {
+        RespValue::Integer(ms) => assert!(ms > 0 && ms <= 60_000),
+        _ => panic!("expected integer response"),
+    }
+}
+
+#[tokio::test]
 async fn test_ttl_expired_key() {
     use std::time::{Duration, Instant};
     let store = Store::new();
@@ -800,6 +863,25 @@ async fn test_ttl_expired_key() {
 
     client
         .write_all(b"*2\r\n$3\r\nTTL\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(-2));
+}
+
+#[tokio::test]
+async fn test_pttl_expired_key() {
+    use std::time::{Duration, Instant};
+    let store = Store::new();
+    store.set_string("foo", "bar");
+    store.set_ttl("foo", Instant::now() - Duration::from_secs(1));
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*2\r\n$4\r\nPTTL\r\n$3\r\nfoo\r\n")
         .await
         .unwrap();
 
@@ -964,6 +1046,36 @@ async fn test_ttl_after_pexpireat() {
 }
 
 #[tokio::test]
+async fn test_pttl_after_pexpireat() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // Set TTL to 60 seconds from now via PEXPIREAT
+    client
+        .write_all(&pexpireat_cmd("foo", 60_000))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*2\r\n$4\r\nPTTL\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    match response {
+        RespValue::Integer(ms) => assert!(ms > 0 && ms <= 60_000),
+        _ => panic!("expected integer response"),
+    }
+}
+
+#[tokio::test]
 async fn test_pexpire_existing_key() {
     let addr = start_handler().await;
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
@@ -1022,6 +1134,35 @@ async fn test_ttl_after_pexpire() {
     let response = resp2::decode_async(&mut client).await.unwrap();
     match response {
         RespValue::Integer(secs) => assert!(secs > 0 && secs <= 60),
+        _ => panic!("expected integer response"),
+    }
+}
+
+#[tokio::test]
+async fn test_pttl_after_pexpire() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*3\r\n$7\r\nPEXPIRE\r\n$3\r\nfoo\r\n$5\r\n60000\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*2\r\n$4\r\nPTTL\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    match response {
+        RespValue::Integer(ms) => assert!(ms > 0 && ms <= 60_000),
         _ => panic!("expected integer response"),
     }
 }
@@ -1112,6 +1253,32 @@ async fn test_ttl_after_expireat() {
     let response = resp2::decode_async(&mut client).await.unwrap();
     match response {
         RespValue::Integer(secs) => assert!(secs > 0 && secs <= 60),
+        _ => panic!("expected integer response"),
+    }
+}
+
+#[tokio::test]
+async fn test_pttl_after_expireat() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client.write_all(&expireat_cmd("foo", 60)).await.unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(b"*2\r\n$4\r\nPTTL\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    match response {
+        RespValue::Integer(ms) => assert!(ms > 0 && ms <= 60_000),
         _ => panic!("expected integer response"),
     }
 }
@@ -4383,6 +4550,206 @@ async fn test_srem_wrong_arity() {
     let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
 
     client.write_all(b"*1\r\n$4\r\nSREM\r\n").await.unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert!(matches!(response, RespValue::SimpleError(_)));
+}
+
+// --- KEYS ---
+
+#[tokio::test]
+async fn test_keys_star_returns_all_keys() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    for key in ["foo", "bar"] {
+        client
+            .write_all(&push_cmd("SET", key, &["val"]))
+            .await
+            .unwrap();
+        resp2::decode_async(&mut client).await.unwrap();
+    }
+
+    client.write_all(&push_cmd("KEYS", "*", &[])).await.unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        members_set(response),
+        HashSet::from(["foo".to_string(), "bar".to_string()])
+    );
+}
+
+#[tokio::test]
+async fn test_keys_matches_keys_of_every_type() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SET", "mystr", &["val"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&push_cmd("RPUSH", "mylist", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&push_cmd("SADD", "myset", &["a"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client.write_all(&push_cmd("KEYS", "*", &[])).await.unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        members_set(response),
+        HashSet::from([
+            "mystr".to_string(),
+            "mylist".to_string(),
+            "myset".to_string()
+        ])
+    );
+}
+
+#[tokio::test]
+async fn test_keys_prefix_pattern() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    for key in ["user:1", "user:2", "session:1"] {
+        client
+            .write_all(&push_cmd("SET", key, &["val"]))
+            .await
+            .unwrap();
+        resp2::decode_async(&mut client).await.unwrap();
+    }
+
+    client
+        .write_all(&push_cmd("KEYS", "user:*", &[]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        members_set(response),
+        HashSet::from(["user:1".to_string(), "user:2".to_string()])
+    );
+}
+
+#[tokio::test]
+async fn test_keys_empty_store_returns_empty_array() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client.write_all(&push_cmd("KEYS", "*", &[])).await.unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Array(Some(vec![])));
+}
+
+#[tokio::test]
+async fn test_keys_no_match_returns_empty_array() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SET", "foo", &["val"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    client
+        .write_all(&push_cmd("KEYS", "bar*", &[]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Array(Some(vec![])));
+}
+
+#[tokio::test]
+async fn test_keys_unterminated_character_class_is_not_an_error() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SET", "foo", &["val"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+    client
+        .write_all(&push_cmd("SET", "f", &["val"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // `[foo` is the class {f, o} over a single character, so it matches "f" but not "foo".
+    client
+        .write_all(&push_cmd("KEYS", "[foo", &[]))
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![RespValue::BulkString(Some("f".to_string()))]))
+    );
+}
+
+#[tokio::test]
+async fn test_keys_star_matches_the_empty_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(&push_cmd("SET", "", &["val"]))
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // Redis reports the empty key for `*` through its all-keys shortcut, but not for `**`.
+    client.write_all(&push_cmd("KEYS", "*", &[])).await.unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::Array(Some(vec![RespValue::BulkString(Some("".to_string()))]))
+    );
+
+    client
+        .write_all(&push_cmd("KEYS", "**", &[]))
+        .await
+        .unwrap();
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Array(Some(vec![])));
+}
+
+#[tokio::test]
+async fn test_keys_skips_expired_key() {
+    use std::time::{Duration, Instant};
+    let store = Store::new();
+    store.set_string("live", "a");
+    store.set_string("expired", "b");
+    store.set_ttl("expired", Instant::now() - Duration::from_secs(1));
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client.write_all(&push_cmd("KEYS", "*", &[])).await.unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(members_set(response), HashSet::from(["live".to_string()]));
+}
+
+#[tokio::test]
+async fn test_keys_wrong_arity() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client.write_all(b"*1\r\n$4\r\nKEYS\r\n").await.unwrap();
 
     let response = resp2::decode_async(&mut client).await.unwrap();
     assert!(matches!(response, RespValue::SimpleError(_)));
