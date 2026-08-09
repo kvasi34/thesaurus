@@ -9,6 +9,8 @@ use std::time::Instant;
 
 use rand::seq::IteratorRandom;
 
+use crate::pattern;
+
 /// Wrapper for `Store` data structures.
 #[derive(Clone, Debug, PartialEq)]
 enum StoreValue {
@@ -170,6 +172,30 @@ impl Store {
             guard.expiry_index.remove(key);
             guard.data.remove(key);
         }
+    }
+
+    /// Returns every key matching the glob-style `pattern`, skipping keys that have expired but
+    /// have not been evicted yet. No pattern is ever rejected as malformed — an odd one simply
+    /// matches few keys or none. O(N) time complexity over the keyspace.
+    pub fn keys(&self, pattern: &[u8]) -> Vec<String> {
+        // Redis short-circuits a pattern of exactly one star instead of consulting the matcher,
+        // which is why `KEYS *` reports the empty key even though `*` alone does not match it.
+        let all_keys = pattern == b"*";
+
+        let guard = self.inner.read().unwrap();
+        let now = Instant::now();
+        guard
+            .data
+            .keys()
+            .filter(|key| {
+                (all_keys || pattern::string_match(key, pattern))
+                    && guard
+                        .expiry_index
+                        .get(key.as_str())
+                        .is_none_or(|v| now < *v)
+            })
+            .cloned()
+            .collect()
     }
 
     /// Returns the number of keys in the store. It may slightly overcount because expired
@@ -475,5 +501,119 @@ mod tests {
         store.delete_bulk(&vec!["foo".to_string(), "missing".to_string()]);
 
         assert_eq!(store.get("foo"), None);
+    }
+
+    // keys
+    // Keys come out of a `HashMap` in no particular order, so sort before comparing.
+    fn sorted_keys(store: &Store, pattern: &[u8]) -> Vec<String> {
+        let mut keys = store.keys(pattern);
+        keys.sort();
+        keys
+    }
+
+    #[test]
+    fn test_keys_empty_store() {
+        let store = Store::new();
+        assert_eq!(store.keys(b"*"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_keys_star_matches_every_key() {
+        let store = Store::new();
+        store.set("foo", StoreValue::Str("a".to_string()));
+        store.set("bar", StoreValue::List(VecDeque::from(["b".to_string()])));
+        store.set("baz", StoreValue::Set(HashSet::from(["c".to_string()])));
+
+        assert_eq!(sorted_keys(&store, b"*"), vec!["bar", "baz", "foo"]);
+    }
+
+    #[test]
+    fn test_keys_prefix_pattern() {
+        let store = Store::new();
+        store.set("user:1", StoreValue::Str("a".to_string()));
+        store.set("user:2", StoreValue::Str("b".to_string()));
+        store.set("session:1", StoreValue::Str("c".to_string()));
+
+        assert_eq!(sorted_keys(&store, b"user:*"), vec!["user:1", "user:2"]);
+    }
+
+    #[test]
+    fn test_keys_question_mark_matches_single_character() {
+        let store = Store::new();
+        store.set("key1", StoreValue::Str("a".to_string()));
+        store.set("key12", StoreValue::Str("b".to_string()));
+
+        assert_eq!(sorted_keys(&store, b"key?"), vec!["key1"]);
+    }
+
+    #[test]
+    fn test_keys_character_class() {
+        let store = Store::new();
+        store.set("hallo", StoreValue::Str("a".to_string()));
+        store.set("hello", StoreValue::Str("b".to_string()));
+        store.set("hillo", StoreValue::Str("c".to_string()));
+
+        assert_eq!(sorted_keys(&store, b"h[ae]llo"), vec!["hallo", "hello"]);
+    }
+
+    #[test]
+    fn test_keys_literal_pattern_matches_exact_key_only() {
+        let store = Store::new();
+        store.set("foo", StoreValue::Str("a".to_string()));
+        store.set("foobar", StoreValue::Str("b".to_string()));
+
+        assert_eq!(store.keys(b"foo"), vec!["foo".to_string()]);
+    }
+
+    #[test]
+    fn test_keys_no_match_returns_empty() {
+        let store = Store::new();
+        store.set("foo", StoreValue::Str("a".to_string()));
+
+        assert_eq!(store.keys(b"bar*"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_keys_unterminated_character_class_is_not_an_error() {
+        let store = Store::new();
+        store.set("foo", StoreValue::Str("a".to_string()));
+        store.set("f", StoreValue::Str("b".to_string()));
+
+        // `[foo` is not rejected: it is the class {f, o} applied to a single character, so it
+        // matches the one-character key but not "foo".
+        assert_eq!(store.keys(b"[foo"), vec!["f".to_string()]);
+    }
+
+    #[test]
+    fn test_keys_star_matches_the_empty_key() {
+        let store = Store::new();
+        store.set("", StoreValue::Str("a".to_string()));
+        store.set("foo", StoreValue::Str("b".to_string()));
+
+        // Redis reports the empty key for `*` through its all-keys shortcut, but not for `**`,
+        // which goes through the matcher and needs at least one character to consume.
+        assert_eq!(sorted_keys(&store, b"*"), vec!["", "foo"]);
+        assert_eq!(store.keys(b"**"), vec!["foo".to_string()]);
+    }
+
+    #[test]
+    fn test_keys_skips_expired_key() {
+        use std::time::Duration;
+        let store = Store::new();
+        store.set("live", StoreValue::Str("a".to_string()));
+        store.set("expired", StoreValue::Str("b".to_string()));
+        store.set_ttl("expired", Instant::now() - Duration::from_secs(1));
+
+        assert_eq!(store.keys(b"*"), vec!["live".to_string()]);
+    }
+
+    #[test]
+    fn test_keys_includes_key_with_future_expiry() {
+        use std::time::Duration;
+        let store = Store::new();
+        store.set("foo", StoreValue::Str("a".to_string()));
+        store.set_ttl("foo", Instant::now() + Duration::from_secs(60));
+
+        assert_eq!(store.keys(b"*"), vec!["foo".to_string()]);
     }
 }

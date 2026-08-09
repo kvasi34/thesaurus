@@ -11,6 +11,7 @@ pub mod config;
 pub mod errors;
 pub mod executor;
 pub mod handler;
+pub mod pattern;
 pub mod resp2;
 pub mod store;
 pub mod ttl;

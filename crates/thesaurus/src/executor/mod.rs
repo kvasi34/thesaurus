@@ -81,6 +81,7 @@ impl Executor {
             Command::SPop { key, count } => self.spop(key, *count),
             Command::SRem { key, members } => self.srem(key, members),
             Command::Ttl { key } => self.ttl(key),
+            Command::PTtl { key } => self.pttl(key),
             Command::ExpireTime { key } => self.expire_time(key),
             Command::PExpireTime { key } => self.pexpire_time(key),
             Command::Persist { key } => self.persist(key),
@@ -88,6 +89,7 @@ impl Executor {
             Command::PExpire { key, milliseconds } => self.pexpire(key, *milliseconds),
             Command::ExpireAt { key, deadline_secs } => self.expire_at(key, *deadline_secs),
             Command::PExpireAt { key, deadline_ms } => self.pexpire_at(key, *deadline_ms),
+            Command::Keys { pattern } => self.keys(pattern),
             Command::Digest { key } => self.digest(key),
             Command::Select { index } => self.select(*index),
             Command::DbSize => self.db_size(),
@@ -115,6 +117,10 @@ impl Executor {
 
     fn ttl(&self, key: &str) -> RespValue {
         self.resolve_expiry(key, "TTL", |r| r.as_secs() as i64)
+    }
+
+    fn pttl(&self, key: &str) -> RespValue {
+        self.resolve_expiry(key, "PTTL", |r| r.as_millis() as i64)
     }
 
     fn expire_time(&self, key: &str) -> RespValue {
@@ -200,6 +206,17 @@ impl Executor {
         )
     }
 
+    fn keys(&self, pattern: &str) -> RespValue {
+        // Map `Vec<String>` to `Vec<RespValue::BulkString>`
+        RespValue::Array(Some(
+            self.store
+                .keys(pattern.as_bytes())
+                .into_iter()
+                .map(|key| RespValue::BulkString(Some(key)))
+                .collect(),
+        ))
+    }
+
     fn select(&self, index: u8) -> RespValue {
         if index != 0 {
             return RespValue::SimpleError("ERR DB index is out of range".to_string());
@@ -259,5 +276,121 @@ impl Executor {
             // No expiry entry: -1 if the key exists, -2 if it doesn't
             None => RespValue::Integer(if self.store.exists(key) { -1 } else { -2 }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+
+    // KEYS returns keys from a `HashMap`, so order is not guaranteed. This unwraps the
+    // RespValue::Array into a set of strings for order-independent comparison.
+    fn keys_set(resp: RespValue) -> HashSet<String> {
+        match resp {
+            RespValue::Array(Some(items)) => items
+                .into_iter()
+                .map(|item| match item {
+                    RespValue::BulkString(Some(s)) => s,
+                    other => panic!("expected bulk string, got {other:?}"),
+                })
+                .collect(),
+            other => panic!("expected array, got {other:?}"),
+        }
+    }
+
+    // pttl
+    #[test]
+    fn test_pttl_missing_key() {
+        let ex = Executor::new(Store::new(), false);
+        assert_eq!(ex.pttl("missing"), RespValue::Integer(-2));
+    }
+
+    #[test]
+    fn test_pttl_key_without_expiry() {
+        let store = Store::new();
+        store.set_string("foo", "bar");
+        let ex = Executor::new(store, false);
+
+        assert_eq!(ex.pttl("foo"), RespValue::Integer(-1));
+    }
+
+    #[test]
+    fn test_pttl_key_with_expiry_returns_milliseconds() {
+        let store = Store::new();
+        store.set_string("foo", "bar");
+        store.set_ttl("foo", Instant::now() + Duration::from_secs(60));
+        let ex = Executor::new(store, false);
+
+        match ex.pttl("foo") {
+            // TTL would round this down to 59 or 60 seconds; PTTL keeps the millisecond precision.
+            RespValue::Integer(ms) => assert!(ms > 59_000 && ms <= 60_000),
+            other => panic!("expected integer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_pttl_expired_key() {
+        let store = Store::new();
+        store.set_string("foo", "bar");
+        store.set_ttl("foo", Instant::now() - Duration::from_secs(1));
+        let ex = Executor::new(store, false);
+
+        assert_eq!(ex.pttl("foo"), RespValue::Integer(-2));
+    }
+
+    // keys
+    #[test]
+    fn test_keys_returns_matching_keys_as_bulk_strings() {
+        let store = Store::new();
+        store.set_string("user:1", "a");
+        store.set_string("user:2", "b");
+        store.set_string("session:1", "c");
+        let ex = Executor::new(store, false);
+
+        assert_eq!(
+            keys_set(ex.keys("user:*")),
+            HashSet::from(["user:1".to_string(), "user:2".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_keys_empty_store_returns_empty_array() {
+        let ex = Executor::new(Store::new(), false);
+        assert_eq!(ex.keys("*"), RespValue::Array(Some(vec![])));
+    }
+
+    #[test]
+    fn test_keys_no_match_returns_empty_array() {
+        let store = Store::new();
+        store.set_string("foo", "a");
+        let ex = Executor::new(store, false);
+
+        assert_eq!(ex.keys("bar*"), RespValue::Array(Some(vec![])));
+    }
+
+    #[test]
+    fn test_keys_no_match_returns_empty_array_not_null_array() {
+        let store = Store::new();
+        store.set_string("foo", "a");
+        let ex = Executor::new(store, false);
+
+        // `Array(None)` would encode as a null array (`*-1`), which is a different reply.
+        assert_eq!(ex.keys("[foo"), RespValue::Array(Some(vec![])));
+    }
+
+    #[test]
+    fn test_keys_skips_expired_key() {
+        let store = Store::new();
+        store.set_string("live", "a");
+        store.set_string("expired", "b");
+        store.set_ttl("expired", Instant::now() - Duration::from_secs(1));
+        let ex = Executor::new(store, false);
+
+        assert_eq!(
+            ex.keys("*"),
+            RespValue::Array(Some(vec![RespValue::BulkString(Some("live".to_string()))]))
+        );
     }
 }

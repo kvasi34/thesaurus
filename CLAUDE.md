@@ -19,6 +19,7 @@ All source files live under `crates/thesaurus/src/`:
 - `command/` — CLI argument parsing (via clap) and RESP2-to-command parsing; `mod.rs` holds the `Command` enum, dispatch, and generic parsers (also used for SADD, SMEMBERS, SCARD, SPOP, SREM), `set.rs` holds SMOVE, SISMEMBER, SMISMEMBER, and SRANDMEMBER parsing, `string.rs` holds `SetCondition`, `SetExpiry`, and SET/MSET parsing, `list.rs` holds LSET/LINDEX/LRANGE parsing
 - `executor/` — bridges `Command` to `Store`; `mod.rs` holds the `Executor` struct and generic command handlers, `string.rs` holds string-type-specific handlers (`GET`, `SET`, `GETDEL`, `MGET`, `MSET`, `DIGEST`), `list.rs` holds list-type-specific handlers, `set.rs` holds set-type-specific handlers (`SADD`, `SMEMBERS`, `SISMEMBER`, `SMISMEMBER`, `SRANDMEMBER`, `SCARD`, `SMOVE`, `SPOP`, `SREM`)
 - `config.rs` — INI config file loading via the `config` crate; exposes `ThesaurusConfig`
+- `pattern.rs` — glob-style matcher used by `KEYS`; a port of Redis' `stringmatchlen()`, byte-oriented and case-sensitive
 - `resp2.rs` — RESP2 protocol encoder and decoder (async for live connections, sync for AOF replay)
 - `store/` — shared in-memory `HashMap` wrapped in `Arc<RwLock>` for concurrent access; `mod.rs` holds the `Store` struct, `StoreValue` enum, and generic key operations, `list.rs` holds list-type operations, `set.rs` holds set-type operations
 - `aof.rs` — optional AOF persistence; appends write commands to disk and replays them on startup
@@ -26,7 +27,7 @@ All source files live under `crates/thesaurus/src/`:
 
 ## Commands
 
-Supported: `PING`, `GET`, `SET` (NX, XX, IFEQ, IFNE, IFDEQ, IFDNE, GET, EX, PX, EXAT, PXAT, KEEPTTL), `DEL`, `GETDEL`, `DIGEST`, `EXISTS`, `MGET`, `MSET`, `LPUSH`, `RPUSH`, `LPUSHX`, `RPUSHX`, `LPOP`, `RPOP`, `LLEN`, `LINDEX`, `LSET`, `LRANGE`, `SADD`, `SMEMBERS`, `SISMEMBER`, `SMISMEMBER`, `SRANDMEMBER`, `SCARD`, `SMOVE`, `SPOP`, `SREM`, `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT`, `TTL`, `EXPIRETIME`, `PEXPIRETIME`, `PERSIST`, `DBSIZE`, `SELECT`, `FLUSHDB`
+Supported: `PING`, `GET`, `SET` (NX, XX, IFEQ, IFNE, IFDEQ, IFDNE, GET, EX, PX, EXAT, PXAT, KEEPTTL), `DEL`, `GETDEL`, `DIGEST`, `EXISTS`, `MGET`, `MSET`, `LPUSH`, `RPUSH`, `LPUSHX`, `RPUSHX`, `LPOP`, `RPOP`, `LLEN`, `LINDEX`, `LSET`, `LRANGE`, `SADD`, `SMEMBERS`, `SISMEMBER`, `SMISMEMBER`, `SRANDMEMBER`, `SCARD`, `SMOVE`, `SPOP`, `SREM`, `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT`, `TTL`, `PTTL`, `EXPIRETIME`, `PEXPIRETIME`, `PERSIST`, `KEYS`, `DBSIZE`, `SELECT`, `FLUSHDB`
 
 ## Running
 
