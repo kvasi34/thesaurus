@@ -608,6 +608,163 @@ async fn test_mset_trailing_key_without_value() {
 }
 
 #[tokio::test]
+async fn test_strlen_existing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // STRLEN foo
+    client
+        .write_all(b"*2\r\n$6\r\nSTRLEN\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(3));
+}
+
+#[tokio::test]
+async fn test_strlen_missing_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // STRLEN missing
+    client
+        .write_all(b"*2\r\n$6\r\nSTRLEN\r\n$7\r\nmissing\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+}
+
+#[tokio::test]
+async fn test_strlen_empty_string() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // SET foo ""
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$0\r\n\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // STRLEN foo
+    client
+        .write_all(b"*2\r\n$6\r\nSTRLEN\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+}
+
+#[tokio::test]
+async fn test_strlen_counts_bytes_not_characters() {
+    let store = Store::new();
+    // "héllo" is 5 characters but 6 bytes: 'é' is two bytes in UTF-8
+    store.set_string("foo", "héllo");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // STRLEN foo
+    client
+        .write_all(b"*2\r\n$6\r\nSTRLEN\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(6));
+}
+
+#[tokio::test]
+async fn test_strlen_reflects_updated_value() {
+    let store = Store::new();
+    store.set_string("foo", "bar");
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // SET foo longer
+    client
+        .write_all(b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$6\r\nlonger\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // STRLEN foo
+    client
+        .write_all(b"*2\r\n$6\r\nSTRLEN\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(6));
+}
+
+#[tokio::test]
+async fn test_strlen_expired_key() {
+    use std::time::{Duration, Instant};
+    let store = Store::new();
+    store.set_string("foo", "bar");
+    store.set_ttl("foo", Instant::now() - Duration::from_secs(1));
+
+    let addr = start_handler_with_store(store).await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    // STRLEN foo — an expired key is treated as missing
+    client
+        .write_all(b"*2\r\n$6\r\nSTRLEN\r\n$3\r\nfoo\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(response, RespValue::Integer(0));
+}
+
+#[tokio::test]
+async fn test_strlen_non_string_key() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client
+        .write_all(b"*3\r\n$5\r\nRPUSH\r\n$6\r\nmylist\r\n$1\r\na\r\n")
+        .await
+        .unwrap();
+    resp2::decode_async(&mut client).await.unwrap();
+
+    // STRLEN mylist
+    client
+        .write_all(b"*2\r\n$6\r\nSTRLEN\r\n$6\r\nmylist\r\n")
+        .await
+        .unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert_eq!(
+        response,
+        RespValue::SimpleError(WRONGTYPE_ERROR.to_string())
+    );
+}
+
+#[tokio::test]
+async fn test_strlen_wrong_arity() {
+    let addr = start_handler().await;
+    let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+
+    client.write_all(b"*1\r\n$6\r\nSTRLEN\r\n").await.unwrap();
+
+    let response = resp2::decode_async(&mut client).await.unwrap();
+    assert!(matches!(response, RespValue::SimpleError(_)));
+}
+
+#[tokio::test]
 async fn test_exists_existing_key() {
     let store = Store::new();
     store.set_string("key1", "Hello");

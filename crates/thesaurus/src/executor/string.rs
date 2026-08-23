@@ -132,6 +132,14 @@ impl Executor {
         RespValue::SimpleString("OK".to_string())
     }
 
+    pub(super) fn strlen(&self, key: &str) -> RespValue {
+        match self.store.get_string(key) {
+            Ok(Some(s)) => RespValue::Integer(s.len() as i64),
+            Ok(None) => RespValue::Integer(0),
+            Err(e) => RespValue::SimpleError(e.to_string()),
+        }
+    }
+
     pub(super) fn digest(&self, key: &str) -> RespValue {
         match self.store.get_string(key) {
             Ok(Some(s)) => RespValue::BulkString(Some(format!("{:016x}", Self::digest_value(&s)))),
@@ -262,5 +270,67 @@ mod tests {
     fn test_mset_returns_ok_for_no_items() {
         let ex = executor();
         assert_eq!(ex.mset(&[]), ok());
+    }
+
+    // strlen
+    #[test]
+    fn test_strlen_returns_length_of_string() {
+        let ex = executor();
+        ex.store.set_string("a", "hello");
+        assert_eq!(ex.strlen("a"), RespValue::Integer(5));
+    }
+
+    #[test]
+    fn test_strlen_returns_zero_on_missing_key() {
+        let ex = executor();
+        assert_eq!(ex.strlen("missing"), RespValue::Integer(0));
+    }
+
+    #[test]
+    fn test_strlen_returns_zero_on_empty_string() {
+        let ex = executor();
+        ex.store.set_string("a", "");
+        assert_eq!(ex.strlen("a"), RespValue::Integer(0));
+    }
+
+    #[test]
+    fn test_strlen_returns_byte_length_for_multibyte_string() {
+        let ex = executor();
+        // "héllo" is 6 bytes: 'é' is two bytes in UTF-8
+        ex.store.set_string("a", "héllo");
+        assert_eq!(ex.strlen("a"), RespValue::Integer(6));
+    }
+
+    #[test]
+    fn test_strlen_reflects_value_after_overwrite() {
+        let ex = executor();
+        ex.store.set_string("a", "hello");
+        assert_eq!(ex.mset(&items(&[("a", "hi")])), ok());
+        assert_eq!(ex.strlen("a"), RespValue::Integer(2));
+    }
+
+    #[test]
+    fn test_strlen_returns_zero_on_expired_key() {
+        let ex = executor();
+        ex.store.set_string("a", "hello");
+        ex.store
+            .set_ttl("a", Instant::now() - Duration::from_secs(1));
+        assert_eq!(ex.strlen("a"), RespValue::Integer(0));
+    }
+
+    #[test]
+    fn test_strlen_returns_length_for_key_with_future_expiry() {
+        let ex = executor();
+        ex.store.set_string("a", "hello");
+        ex.store
+            .set_ttl("a", Instant::now() + Duration::from_secs(60));
+        assert_eq!(ex.strlen("a"), RespValue::Integer(5));
+    }
+
+    #[test]
+    fn test_strlen_returns_wrongtype_on_non_string_key() {
+        let ex = executor();
+        ex.sadd("set", &keys(&["x"]));
+        assert!(matches!(ex.strlen("set"), RespValue::SimpleError(_)));
     }
 }

@@ -37,7 +37,7 @@ Implementation status of every Redis 8.8 command, grouped by data type.
 | `SETEX` | Sets the string value and expiration in seconds of a key | | | |
 | `SETNX` | Sets the string value of a key only when the key doesn't exist | | | |
 | `SETRANGE` | Overwrites part of a string value at a given offset | | | |
-| `STRLEN` | Returns the length of a string value | | ✓ | |
+| `STRLEN` | Returns the length of a string value | ✓ | | |
 | `SUBSTR` | Returns a substring of a string value | | | |
 
 ## Hashes
