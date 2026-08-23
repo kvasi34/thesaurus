@@ -58,6 +58,8 @@ pub enum Command {
     MGet { keys: Vec<String> },
     /// Sets the given keys to their respective values.
     MSet { items: Vec<(String, String)> },
+    /// Returns the length of the string value stored at key.
+    StrLen { key: String },
     /// Prepends one or more elements to a list, creating the key if it does not exist.
     LPush { key: String, elements: Vec<String> },
     /// Appends one or more elements to a list, creating the key if it does not exist.
@@ -180,6 +182,7 @@ impl Command {
             "EXISTS" => Command::parse_keys_command(args, |keys| Command::Exists { keys }),
             "MGET" => Command::parse_keys_command(args, |keys| Command::MGet { keys }),
             "MSET" => Command::parse_mset_command(args),
+            "STRLEN" => Command::parse_key_command(args, |key| Command::StrLen { key }),
             "LPUSH" => Command::parse_key_with_elements_command(args, |key, elements| {
                 Command::LPush { key, elements }
             }),
@@ -669,6 +672,41 @@ mod tests {
             HandlerError::WrongArity {
                 expected: 5,
                 got: 4
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_strlen() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["STRLEN", "foo"]));
+        assert_eq!(
+            cmd.unwrap(),
+            Command::StrLen {
+                key: "foo".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_strlen_missing_key() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["STRLEN"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 2,
+                got: 1
+            }
+        );
+    }
+
+    #[test]
+    fn test_from_resp2_strlen_wrong_arity() {
+        let cmd = Command::from_resp2(&create_cmd_resp_msg(&["STRLEN", "foo", "bar"]));
+        assert_eq!(
+            cmd.err().unwrap(),
+            HandlerError::WrongArity {
+                expected: 2,
+                got: 3
             }
         );
     }

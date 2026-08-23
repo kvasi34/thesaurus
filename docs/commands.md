@@ -11,6 +11,7 @@
 | `EXISTS`       | `EXISTS key [key …]`                           | —                                                              |
 | `MGET`         | `MGET key [key …]`                             | —                                                              |
 | `MSET`         | `MSET key value [key value …]`                 | —                                                              |
+| `STRLEN`       | `STRLEN key`                                   | —                                                              |
 | `LPUSH`        | `LPUSH key element [element …]`                | —                                                              |
 | `RPUSH`        | `RPUSH key element [element …]`                | —                                                              |
 | `LPUSHX`       | `LPUSHX key element [element …]`               | —                                                              |
